@@ -14,7 +14,7 @@ Because I can, and I am too lazy to write an OpenAPI spec. Write handlers, retur
 ## Install
 
 ```sh
-yarn add giri hono @hono/node-server zod
+yarn add @boon4681/giri hono @hono/node-server zod
 ```
 
 `hono`, `@hono/node-server`, `zod`, `valibot`, and `typescript` are optional peers — install
