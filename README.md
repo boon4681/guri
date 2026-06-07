@@ -4,11 +4,8 @@
 
 A stupid attempt from a stupid man who lack of foresight trying to make a backend framework.
 
-Guri is a backend-agnostic web framework with a portable handler API. You write handlers
-against guri's own context (`c.json`, `c.text`, hono-shaped); a pluggable **adapter** runs
-them on a real backend (Hono first). Guri owns the handler/context API, the file-based route
-convention, and a build step that derives a route manifest, typed params, and `openapi.json`
-from your handlers' return types.
+## Why does guri exist?
+Because I can, and I am too lazy to write an OpenAPI spec. Write handlers, return values. Guri infers the OpenAPI spec from the handlers, and generates types for params and `openapi.json` from them. Runs on Hono.
 
 > Status: early and experimental. Hono is the only adapter today; the API will change.
 
