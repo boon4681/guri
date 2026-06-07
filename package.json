@@ -1,5 +1,5 @@
 {
-    "name": "girigiri",
+    "name": "@boon4681/giri",
     "version": "0.0.1",
     "license": "MIT",
     "main": "./dist/index.js",

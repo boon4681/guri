@@ -1,4 +1,4 @@
-import type { Handle } from "giri";
+import type { Handle } from "@boon4681/giri";
 import { listUsers } from "../../db";
 
 export const handle: Handle = (c) => {

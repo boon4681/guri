@@ -1,7 +1,9 @@
 #!/usr/bin/env node
+import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import * as prompts from '@clack/prompts';
 import { buildGiriApp } from './app';
 import { load } from './loader/loader';
 import { createWatchUpdater, syncProject } from './generator';
@@ -15,15 +17,79 @@ interface ParsedFlags {
     watch: boolean;
 }
 
+type PackageManager = 'npm' | 'yarn' | 'pnpm' | 'bun';
+
+interface AdapterChoice {
+    value: string;
+    label: string;
+    hint: string;
+    available: boolean;
+    /** Import line added to `giri.config.ts`. */
+    importLine: string;
+    /** The adapter expression placed in `defineConfig({ adapter: … })`. */
+    expr: string;
+    /** Runtime deps this backend needs, installed alongside the framework. */
+    deps: string[];
+}
+
+const ADAPTERS: AdapterChoice[] = [
+    {
+        value: 'hono',
+        label: 'Hono',
+        hint: 'recommended, ships today',
+        available: true,
+        importLine: 'import { hono } from "@boon4681/giri/adapters/hono";',
+        expr: 'hono()',
+        deps: ['hono', '@hono/node-server'],
+    }
+];
+
+interface InitFlags {
+    adapter?: string;
+    packageManager?: PackageManager;
+    /** undefined = ask; true/false = forced by --install / --no-install. */
+    install?: boolean;
+    /** Non-interactive: take defaults (Hono, detected PM, install). */
+    yes: boolean;
+}
+
 function help(): void {
     console.log(`giri
 
 Usage:
-  giri init
+  giri init [--adapter hono] [--pm npm|yarn|pnpm|bun] [--no-install] [-y]
   giri sync
   giri serve [--port 3000] [--host 127.0.0.1] [--no-watch]
   giri build
 `);
+}
+
+function parseInitFlags(args: string[]): InitFlags {
+    const flags: InitFlags = { yes: false };
+    const managers: PackageManager[] = ['npm', 'yarn', 'pnpm', 'bun'];
+
+    for (let index = 0; index < args.length; index += 1) {
+        const arg = args[index];
+        if (arg === '--adapter' || arg === '-a') {
+            flags.adapter = args[++index];
+        } else if (arg === '--pm' || arg === '--package-manager') {
+            const value = args[++index];
+            if (!managers.includes(value as PackageManager)) {
+                throw new Error(`Unknown package manager: ${value} (expected ${managers.join(', ')})`);
+            }
+            flags.packageManager = value as PackageManager;
+        } else if (arg === '--install') {
+            flags.install = true;
+        } else if (arg === '--no-install') {
+            flags.install = false;
+        } else if (arg === '-y' || arg === '--yes') {
+            flags.yes = true;
+        } else {
+            throw new Error(`Unknown option: ${arg}`);
+        }
+    }
+
+    return flags;
 }
 
 function parseFlags(args: string[]): ParsedFlags {
@@ -88,21 +154,96 @@ async function ensureTsConfig(cwd: string): Promise<void> {
     );
 }
 
-async function initProject(cwd: string): Promise<void> {
+/** Guess the package manager from the user agent npm/yarn/pnpm/bun set when invoking the CLI. */
+function detectPackageManager(): PackageManager {
+    const ua = process.env.npm_config_user_agent ?? '';
+    if (ua.startsWith('yarn')) return 'yarn';
+    if (ua.startsWith('pnpm')) return 'pnpm';
+    if (ua.startsWith('bun')) return 'bun';
+    return 'npm';
+}
+
+function installArgs(pm: PackageManager, deps: string[], dev: boolean): string[] {
+    if (pm === 'npm') return ['install', ...(dev ? ['--save-dev'] : []), ...deps];
+    if (pm === 'bun') return ['add', ...(dev ? ['--dev'] : []), ...deps];
+    return ['add', ...(dev ? ['--dev'] : []), ...deps]; // yarn, pnpm
+}
+
+/** Run a package-manager command, streaming its output. On Windows the binaries are `.cmd` shims. */
+function runCommand(cmd: string, args: string[], cwd: string): Promise<void> {
+    return new Promise((resolvePromise, reject) => {
+        const child = spawn(cmd, args, { cwd, stdio: 'inherit', shell: process.platform === 'win32' });
+        child.on('error', reject);
+        child.on('close', (code) => {
+            if (code === 0) {
+                resolvePromise();
+            } else {
+                reject(new Error(`${cmd} ${args.join(' ')} exited with code ${code}`));
+            }
+        });
+    });
+}
+
+function configSource(adapter: AdapterChoice): string {
+    return [
+        'import { defineConfig } from "@boon4681/giri";',
+        adapter.importLine,
+        '',
+        'export default defineConfig({',
+        `   adapter: ${adapter.expr},`,
+        '});',
+        '',
+    ].join('\n');
+}
+
+/** Prompt for the adapter (or take the default in non-interactive mode). Null = the user cancelled. */
+async function selectAdapter(interactive: boolean): Promise<AdapterChoice | null> {
+    if (!interactive || ADAPTERS.length === 1) {
+        return ADAPTERS[0];
+    }
+
+    const picked = await prompts.select({
+        message: 'Which backend adapter?',
+        initialValue: 'hono',
+        options: ADAPTERS.map((adapter) => ({
+            value: adapter.value,
+            label: adapter.label,
+            hint: adapter.hint,
+        })),
+    });
+    if (prompts.isCancel(picked)) {
+        return null;
+    }
+    return ADAPTERS.find((adapter) => adapter.value === picked) ?? null;
+}
+
+async function initProject(cwd: string, flags: InitFlags): Promise<void> {
+    const interactive = Boolean(process.stdout.isTTY) && !flags.yes;
+    prompts.intro('giri init');
+
+    let adapter: AdapterChoice | null;
+    if (flags.adapter) {
+        adapter = ADAPTERS.find((choice) => choice.value === flags.adapter) ?? null;
+        if (!adapter) {
+            prompts.cancel(`Unknown adapter "${flags.adapter}". Available: ${ADAPTERS.map((a) => a.value).join(', ')}.`);
+            return;
+        }
+    } else {
+        adapter = await selectAdapter(interactive);
+        if (!adapter) {
+            prompts.cancel('Cancelled.');
+            return;
+        }
+    }
+
+    if (!adapter.available) {
+        prompts.cancel(`The ${adapter.label} adapter isn't available yet — only Hono ships today.`);
+        return;
+    }
+
     const configPath = join(cwd, 'giri.config.ts');
     if (!existsSync(configPath)) {
-        await writeFile(
-            configPath,
-            [
-                'import { defineConfig } from "giri";',
-                'import { hono } from "giri/adapters/hono";',
-                '',
-                'export default defineConfig({',
-                '   adapter: hono(),',
-                '});',
-                '',
-            ].join('\n'),
-        );
+        await writeFile(configPath, configSource(adapter));
     }
 
     const routePath = join(cwd, 'src', 'routes', '+get.ts');
@@ -111,7 +252,7 @@ async function initProject(cwd: string): Promise<void> {
         await writeFile(
             routePath,
             [
-                'import type { Handle } from "giri";',
+                'import type { Handle } from "@boon4681/giri";',
                 '',
                 'export const handle: Handle = (c) => c.json({ ok: true });',
                 '',
@@ -121,7 +262,44 @@ async function initProject(cwd: string): Promise<void> {
 
     await ensureGitignore(cwd);
     await ensureTsConfig(cwd);
-    log.success('initialized giri project', 'init');
+    prompts.log.success(`scaffolded a ${adapter.label} project`);
+
+    const pm = flags.packageManager ?? detectPackageManager();
+    let install = flags.install;
+    if (install === undefined) {
+        if (!interactive) {
+            install = flags.yes;
+        } else {
+            const answer = await prompts.confirm({ message: `Install dependencies with ${pm}?` });
+            if (prompts.isCancel(answer)) {
+                prompts.cancel('Cancelled — files written, skipped install.');
+                return;
+            }
+            install = answer;
+        }
+    }
+
+    const deps = ['@boon4681/giri', ...adapter.deps, 'zod'];
+    const devDeps = ['typescript', '@types/node'];
+
+    if (install) {
+        try {
+            prompts.log.step(`Installing ${deps.join(', ')}`);
+            await runCommand(pm, installArgs(pm, deps, false), cwd);
+            prompts.log.step(`Installing dev deps ${devDeps.join(', ')}`);
+            await runCommand(pm, installArgs(pm, devDeps, true), cwd);
+        } catch (error) {
+            prompts.log.error(error instanceof Error ? error.message : String(error));
+            prompts.outro(`Install failed — run \`${pm} ${installArgs(pm, deps, false).join(' ')}\` yourself, then \`giri serve\`.`);
+            return;
+        }
+        prompts.outro('Ready. Run `giri serve` to start the dev server.');
+        return;
+    }
+
+    prompts.outro(
+        `Next:\n  ${pm} ${installArgs(pm, deps, false).join(' ')}\n  ${pm} ${installArgs(pm, devDeps, true).join(' ')}\n  giri serve`,
+    );
 }
 
 function displayHost(address: string): string {
@@ -249,7 +427,7 @@ async function main(): Promise<void> {
     }
 
     if (command === 'init') {
-        await initProject(cwd);
+        await initProject(cwd, parseInitFlags(args));
         return;
     }
 

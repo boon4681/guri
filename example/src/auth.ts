@@ -1,4 +1,4 @@
-import { defineMiddleware } from "giri";
+import { defineMiddleware } from "@boon4681/giri";
 
 // Tag the middleware once with its OpenAPI security. Any route that uses `auth`
 // shows `bearerAuth` in the generated doc; routes that don't stay public.

@@ -22,7 +22,7 @@ function wrap<Schema extends z.ZodType>(schema: Schema): GiriInputSchema<z.infer
  *
  * ```ts
  * import { z } from 'zod';
- * import { zod } from 'giri/validators/zod';
+ * import { zod } from '@boon4681/giri/validators/zod';
  *
  * // JSON body
  * export const body = zod.body({ json: z.object({ name: z.string().min(1) }) });

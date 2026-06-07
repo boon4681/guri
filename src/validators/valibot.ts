@@ -25,7 +25,7 @@ function wrap<Schema extends AnySchema>(schema: Schema): GiriInputSchema<v.Infer
  *
  * ```ts
  * import * as v from 'valibot';
- * import { valibot } from 'giri/validators/valibot';
+ * import { valibot } from '@boon4681/giri/validators/valibot';
  *
  * export const body = valibot.body({ json: v.object({ name: v.pipe(v.string(), v.minLength(1)) }) });
  * export const query = valibot.query(v.object({ page: v.string() }));

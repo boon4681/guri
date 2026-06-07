@@ -38,7 +38,7 @@ describe('syncProject', () => {
         );
         expect(types).toContain('"id": string;');
         expect(types).toContain('export type Handle<Input');
-        expect(types).toContain('import("giri").Handle<Params, Input, Vars>');
+        expect(types).toContain('import("@boon4681/giri").Handle<Params, Input, Vars>');
         expect(types).toContain('export type Middleware<Injects');
 
         const tsconfig = await readFile(join(outDir, 'tsconfig.json'), 'utf8');
@@ -54,7 +54,7 @@ describe('syncProject', () => {
         expect(tsconfig).toContain('"../src/*"');
         expect(tsconfig).toContain('"@db"');
         expect(tsconfig).toContain('"../src/db.ts"');
-        expect(tsconfig).toContain('"giri/tsc"');
+        expect(tsconfig).toContain('"@boon4681/giri/tsc"');
     });
 
     it('generates params that TypeScript can use to reject wrong keys', async () => {
@@ -83,7 +83,7 @@ describe('syncProject', () => {
             rootDirs: [routesDir, join(outDir, 'types', 'src', 'routes')],
             baseUrl: process.cwd(),
             paths: {
-                giri: ['src/index.ts'],
+                '@boon4681/giri': ['src/index.ts'],
             },
             types: ['node'],
         });
@@ -99,7 +99,7 @@ describe('syncProject', () => {
             join(routesDir, 'users', '+post.ts'),
             [
                 'import { z } from "zod";',
-                'import { zod } from "giri/validators/zod";',
+                'import { zod } from "@boon4681/giri/validators/zod";',
                 'import type { POST } from "./$types";',
                 '',
                 'export const body = zod.body({',
@@ -127,8 +127,8 @@ describe('syncProject', () => {
             rootDirs: [routesDir, join(outDir, 'types', 'src', 'routes')],
             baseUrl: process.cwd(),
             paths: {
-                giri: ['src/index.ts'],
-                'giri/validators/zod': ['src/validators/zod.ts'],
+                '@boon4681/giri': ['src/index.ts'],
+                '@boon4681/giri/validators/zod': ['src/validators/zod.ts'],
             },
             types: ['node'],
         });
@@ -143,7 +143,7 @@ describe('syncProject', () => {
         await writeFile(
             join(routesDir, 'users', '+post.ts'),
             [
-                'import { stack } from "giri";',
+                'import { stack } from "@boon4681/giri";',
                 'import type { POST, Middleware } from "./$types";',
                 '',
                 'const auth: Middleware<{ userId: string }> = async (c, next) => {',
@@ -169,7 +169,7 @@ describe('syncProject', () => {
             skipLibCheck: true,
             rootDirs: [routesDir, join(outDir, 'types', 'src', 'routes')],
             baseUrl: process.cwd(),
-            paths: { giri: ['src/index.ts'] },
+            paths: { '@boon4681/giri': ['src/index.ts'] },
             types: ['node'],
         });
         const diagnostics = ts.getPreEmitDiagnostics(program);
@@ -183,7 +183,7 @@ describe('syncProject', () => {
         await writeFile(
             join(routesDir, '+shared.ts'),
             [
-                'import { stack } from "giri";',
+                'import { stack } from "@boon4681/giri";',
                 'import type { Middleware } from "./$types";',
                 'const auth: Middleware<{ user: string }> = async (c, next) => {',
                 '  c.set("user", "ada");',
@@ -216,7 +216,7 @@ describe('syncProject', () => {
                 skipLibCheck: true,
                 rootDirs: [routesDir, join(outDir, 'types', 'src', 'routes')],
                 baseUrl: process.cwd(),
-                paths: { giri: ['src/index.ts'] },
+                paths: { '@boon4681/giri': ['src/index.ts'] },
                 types: ['node'],
             },
         );

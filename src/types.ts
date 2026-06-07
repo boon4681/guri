@@ -165,7 +165,7 @@ export type InputValidationResult<Output = unknown> =
 
 /**
  * A input schema every wrapper form (`body`/`query`) export takes. A vendor
- * adapter (`giri/validators/zod`, `giri/validators/valibot`, …) returns one; build a
+ * adapter (`@boon4681/giri/validators/zod`, `@boon4681/giri/validators/valibot`, …) returns one; build a
  * custom one with `defineInputSchema`. giri core depends only on this interface, never
  * on a validator library. `validate` is the runtime check; `toJsonSchema` feeds OpenAPI.
  */

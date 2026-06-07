@@ -1,4 +1,4 @@
-import type { Services } from "giri";
+import type { Services } from "@boon4681/giri";
 
 export const init = () => {
     return { a: 5 }

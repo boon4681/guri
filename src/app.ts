@@ -61,7 +61,7 @@ function normalizeMiddleware(value: unknown, file: string): Middleware[] {
 function assertBodySchema(value: unknown, file: string): asserts value is GiriBodySchema {
     if (!isGiriBodySchema(value)) {
         throw new Error(
-            `${file}: "body" must be wrapped with a validator, e.g. \`export const body = zod.body({ json: ... })\` from giri/validators/zod.`,
+            `${file}: "body" must be wrapped with a validator, e.g. \`export const body = zod.body({ json: ... })\` from @boon4681/giri/validators/zod.`,
         );
     }
 }
@@ -69,7 +69,7 @@ function assertBodySchema(value: unknown, file: string): asserts value is GiriBo
 function assertQuerySchema(value: unknown, file: string): asserts value is GiriInputSchema {
     if (!isGiriInputSchema(value)) {
         throw new Error(
-            `${file}: "query" must be wrapped with a validator, e.g. \`export const query = zod.query(...)\` from giri/validators/zod.`,
+            `${file}: "query" must be wrapped with a validator, e.g. \`export const query = zod.query(...)\` from @boon4681/giri/validators/zod.`,
         );
     }
 }

@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { buildGiriApp } from "giri";
+import { buildGiriApp } from "@boon4681/giri";
 import config from "./giri.config";
 
 const cwd = fileURLToPath(new URL(".", import.meta.url));

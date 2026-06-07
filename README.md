@@ -1,8 +1,10 @@
 # Giri
 
+A stupid attempt from a stupid man who lack of foresight trying to make a backend framework.
+
 <img width="128" src="https://raw.githubusercontent.com/boon4681/giri/refs/heads/main/.image/logo.png" />
 
-A stupid attempt from a stupid man who lack of foresight trying to make a backend framework.
+## F*CK NPM PUBLISH i have to change this package name from `guri` to `giri` to `@boon4681/giri`  because of the name collision and there is no contact about request a package name that hit npm stupid filter.
 
 ## Why does giri exist?
 Because I can, and I am too lazy to write an OpenAPI spec. Write handlers, return values. Giri infers the OpenAPI spec from the handlers, and generates types for params and `openapi.json` from them. Runs on Hono.
@@ -38,8 +40,8 @@ curl http://localhost:3000/
 side effects (no DB drivers here; see [Lifecycle](#lifecycle)).
 
 ```ts
-import { defineConfig } from "giri";
-import { hono } from "giri/adapters/hono";
+import { defineConfig } from "@boon4681/giri";
+import { hono } from "@boon4681/giri/adapters/hono";
 
 export default defineConfig({
     adapter: hono(),                       // required: the backend bridge
@@ -101,13 +103,13 @@ Giri owns `c`, so the return type is the schema on every backend:
 ## Inputs
 
 Outputs are inferred; inputs are declared with a **wrapped** schema so giri gets both runtime
-validation and a JSON Schema for the doc. Wrappers live in `giri/validators/zod` and
-`giri/validators/valibot`.
+validation and a JSON Schema for the doc. Wrappers live in `@boon4681/giri/validators/zod` and
+`@boon4681/giri/validators/valibot`.
 
 ```ts
 // src/routes/users/+post.ts
 import { z } from "zod";
-import { zod } from "giri/validators/zod";
+import { zod } from "@boon4681/giri/validators/zod";
 import type { POST } from "./$types";
 
 export const body = zod.body({
@@ -137,7 +139,7 @@ downstream handlers. Run order: inherited `+shared.ts` (root to leaf), then the 
 
 ```ts
 // src/routes/+shared.ts
-import { stack } from "giri";
+import { stack } from "@boon4681/giri";
 import type { Middleware } from "./$types";
 
 const requestId: Middleware<{ requestId: string }> = async (c, next) => {
@@ -154,7 +156,7 @@ uses it shows the scheme, a public route does not.
 
 ```ts
 // src/auth.ts
-import { defineMiddleware } from "giri";
+import { defineMiddleware } from "@boon4681/giri";
 
 export const auth = defineMiddleware<{ userId: string }>(
     {
@@ -180,7 +182,7 @@ graceful shutdown. Giri owns the serve and calls these hooks; the adapter still 
 
 ```ts
 // src/main.ts
-import type { Services } from "giri";
+import type { Services } from "@boon4681/giri";
 
 export const init = () => {
     // leave init unannotated — its return type is the source of truth for c.app
@@ -198,12 +200,12 @@ handler as a typed `c.app`, inferred from `init`'s return — no declaration nee
 
 ## CLI
 
-| Command | What it does |
-| --- | --- |
-| `giri init` | Scaffold `giri.config.ts`, a starter route, tsconfig paths, and `.gitignore`. |
-| `giri sync` | Scan `src/routes` and regenerate `.giri/` (manifest, param types, `openapi.json`). |
-| `giri serve` | `sync`, run `init()`, then serve via the adapter. Watches `src/` and re-syncs. |
-| `giri build` | Planned — currently a no-op. |
+| Command      | What it does                                                                       |
+| ------------ | ---------------------------------------------------------------------------------- |
+| `giri init`  | Scaffold `giri.config.ts`, a starter route, tsconfig paths, and `.gitignore`.      |
+| `giri sync`  | Scan `src/routes` and regenerate `.giri/` (manifest, param types, `openapi.json`). |
+| `giri serve` | `sync`, run `init()`, then serve via the adapter. Watches `src/` and re-syncs.     |
+| `giri build` | Planned — currently a no-op.                                                       |
 
 `giri serve` flags: `--port <n>`, `--host <addr>`, `--no-watch`.
 

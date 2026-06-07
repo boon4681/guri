@@ -32,7 +32,7 @@ export async function writeTsConfig(paths: GiriPaths, config: Pick<GiriConfig, '
             },
             plugins: [
                 {
-                    name: 'giri/tsc',
+                    name: '@boon4681/giri/tsc',
                 },
             ],
         },

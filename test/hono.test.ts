@@ -191,7 +191,7 @@ describe('hono adapter', () => {
         const routesDir = join(tmp, 'src', 'routes');
         await mkdir(join(routesDir, 'users'), { recursive: true });
         // Import the actual zod adapter by absolute source path (a tmp route can't resolve the
-        // bare "giri/validators/zod" specifier), so this drives the real `zod.body()`.
+        // bare "@boon4681/giri/validators/zod" specifier), so this drives the real `zod.body()`.
         const zodAdapter = join(process.cwd(), 'src', 'validators', 'zod').replace(/\\/g, '/');
         await writeFile(
             join(routesDir, 'users', '+post.ts'),

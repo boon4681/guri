@@ -123,7 +123,7 @@ async function runValidation(
 ): Promise<InputValidationResult> {
     if (!isGiriInputSchema(schema)) {
         throw new Error(
-            `giri: ${label} schema must be wrapped with a validator, e.g. \`export const ${label} = zod(...)\` from giri/validators/zod.`,
+            `giri: ${label} schema must be wrapped with a validator, e.g. \`export const ${label} = zod(...)\` from @boon4681/giri/validators/zod.`,
         );
     }
     return schema.validate(value);
