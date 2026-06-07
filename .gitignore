@@ -12,6 +12,7 @@ test/.tmp
 /build
 /.t*
 /.c*
+/p*
 
 # OS
 .DS_Store
