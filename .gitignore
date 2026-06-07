@@ -1,6 +1,9 @@
 node_modules
 
 # Output
+.guri
+dist
+test/.tmp
 .output
 .vercel
 .netlify

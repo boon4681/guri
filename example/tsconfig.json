@@ -1,16 +1,14 @@
 {
+    "extends": "./.guri/tsconfig.json",
     "compilerOptions": {
         "target": "ES2022",
         "lib": [
             "ES2022",
             "DOM"
         ],
-        "module": "NodeNext",
-        "moduleResolution": "NodeNext",
+        "module": "ESNext",
+        "moduleResolution": "Bundler",
         "strict": true,
-        "declaration": true,
-        "declarationMap": true,
-        "sourceMap": true,
         "esModuleInterop": true,
         "forceConsistentCasingInFileNames": true,
         "skipLibCheck": true,
@@ -18,13 +16,5 @@
             "node",
             "vitest/globals"
         ]
-    },
-    "include": [
-        "src",
-        "test",
-        "build.ts"
-    ],
-    "exclude": [
-        "test/.tmp"
-    ]
+    }
 }

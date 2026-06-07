@@ -1,0 +1,201 @@
+import {
+    type BodyContentType,
+    type GuriBodySchema,
+    type GuriInputSchema,
+    type InputValidationResult,
+    type RouteInput,
+    type TypedResponse,
+    type ValidatedInput,
+    bodySchemaBrand,
+    inputSchemaBrand,
+} from './types';
+import { createTypedResponse } from './context';
+
+interface PreparedInput {
+    ok: true;
+    validated: ValidatedInput;
+}
+
+interface FailedInput {
+    ok: false;
+    response: TypedResponse<{ message: string; issues: unknown }, 400 | 415, 'json'>;
+}
+
+export type PreparedRequestInput = PreparedInput | FailedInput;
+
+/**
+ * Build a guri input schema from a `validate` + `toJsonSchema` pair. Vendor adapters use
+ * this; you can call it directly to make a custom validator. The brand is a global symbol,
+ * so a hand-rolled `{ [Symbol.for("guri.input-schema")]: true, validate, toJsonSchema }` works too.
+ */
+export function defineInputSchema<Output>(
+    schema: Omit<GuriInputSchema<Output>, typeof inputSchemaBrand>,
+): GuriInputSchema<Output> {
+    return { [inputSchemaBrand]: true, ...schema };
+}
+
+export function isGuriInputSchema(value: unknown): value is GuriInputSchema {
+    return Boolean(
+        value &&
+            typeof value === 'object' &&
+            (value as Record<symbol, unknown>)[inputSchemaBrand] === true,
+    );
+}
+
+/**
+ * Build a guri body schema from per-content-type input schemas. Validator adapters use this `zod.body({ json, form })`
+ */
+export function defineBodySchema<Outputs extends Partial<Record<BodyContentType, unknown>>>(
+    contents: GuriBodySchema<Outputs>['contents'],
+): GuriBodySchema<Outputs> {
+    return { [bodySchemaBrand]: true, contents };
+}
+
+export function isGuriBodySchema(value: unknown): value is GuriBodySchema {
+    return Boolean(
+        value &&
+            typeof value === 'object' &&
+            (value as Record<symbol, unknown>)[bodySchemaBrand] === true,
+    );
+}
+
+const MIME_TO_CONTENT_TYPE: Record<string, BodyContentType> = {
+    'application/json': 'json',
+    'multipart/form-data': 'form',
+    'application/x-www-form-urlencoded': 'urlencoded',
+    'text/plain': 'text',
+};
+
+function contentTypeFromHeader(header: string | null): BodyContentType | undefined {
+    if (!header) {
+        return undefined;
+    }
+    const mime = header.split(';', 1)[0].trim().toLowerCase();
+    return MIME_TO_CONTENT_TYPE[mime];
+}
+
+/** Flatten a `FormData` into a plain object, collapsing repeated fields into arrays. */
+function formDataObject(form: FormData): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
+    form.forEach((value, key) => {
+        const current = result[key];
+        if (current === undefined) {
+            result[key] = value;
+        } else if (Array.isArray(current)) {
+            current.push(value);
+        } else {
+            result[key] = [current, value];
+        }
+    });
+    return result;
+}
+
+async function readRawBody(request: Request, contentType: BodyContentType): Promise<unknown> {
+    const cloned = request.clone();
+    if (contentType === 'json') {
+        return cloned.json();
+    }
+    if (contentType === 'text') {
+        return cloned.text();
+    }
+    return formDataObject(await cloned.formData());
+}
+
+function queryObject(url: URL): Record<string, string | string[]> {
+    const result: Record<string, string | string[]> = {};
+    for (const [key, value] of url.searchParams) {
+        const current = result[key];
+        if (current === undefined) {
+            result[key] = value;
+        } else if (Array.isArray(current)) {
+            current.push(value);
+        } else {
+            result[key] = [current, value];
+        }
+    }
+    return result;
+}
+
+async function runValidation(
+    schema: GuriInputSchema,
+    value: unknown,
+    label: string,
+): Promise<InputValidationResult> {
+    if (!isGuriInputSchema(schema)) {
+        throw new Error(
+            `guri: ${label} schema must be wrapped with a validator, e.g. \`export const ${label} = zod(...)\` from guri/validators/zod.`,
+        );
+    }
+    return schema.validate(value);
+}
+
+export async function prepareRequestInput(request: Request, input?: RouteInput): Promise<PreparedRequestInput> {
+    const validated: ValidatedInput = {};
+
+    if (input?.query) {
+        const query = queryObject(new URL(request.url));
+        const result = await runValidation(input.query, query, 'query');
+        if (!result.ok) {
+            return {
+                ok: false,
+                response: createTypedResponse(
+                    { message: 'Invalid query parameters.', issues: result.issues },
+                    400,
+                    'json',
+                ),
+            };
+        }
+        validated.query = result.value;
+    }
+
+    if (input?.body) {
+        const contents = input.body.contents as Record<BodyContentType, GuriInputSchema>;
+        const declared = Object.keys(contents) as BodyContentType[];
+        const requested = contentTypeFromHeader(request.headers.get('content-type'));
+        // Pick the schema matching the request's content-type; fall back to JSON when the
+        // header is missing/unrecognized but JSON is on offer (so header-less posts still work).
+        const chosen: BodyContentType | undefined =
+            requested && contents[requested] ? requested : contents.json ? 'json' : undefined;
+
+        if (!chosen) {
+            return {
+                ok: false,
+                response: createTypedResponse(
+                    { message: 'Unsupported media type.', issues: { accepted: declared } },
+                    415,
+                    'json',
+                ),
+            };
+        }
+
+        let rawBody: unknown;
+        try {
+            rawBody = await readRawBody(request, chosen);
+        } catch (error) {
+            return {
+                ok: false,
+                response: createTypedResponse(
+                    { message: 'Invalid request body.', issues: error },
+                    400,
+                    'json',
+                ),
+            };
+        }
+
+        const result = await runValidation(contents[chosen], rawBody, 'body');
+        if (!result.ok) {
+            return {
+                ok: false,
+                response: createTypedResponse(
+                    { message: 'Invalid request body.', issues: result.issues },
+                    400,
+                    'json',
+                ),
+            };
+        }
+
+        validated.body = declared.length > 1 ? { type: chosen, data: result.value } : result.value;
+    }
+
+    return { ok: true, validated };
+}

@@ -1,0 +1,190 @@
+import { existsSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
+import { basename, dirname, join, relative, sep } from 'node:path';
+import { glob } from 'tinyglobby';
+import type { HttpMethod } from './types';
+
+const METHOD_ORDER: HttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'];
+const METHOD_FROM_FILE = new Map<string, HttpMethod>(
+    METHOD_ORDER.map((method) => [`+${method.toLowerCase()}`, method]),
+);
+
+export interface RouteParam {
+    name: string;
+    catchAll: boolean;
+}
+
+export interface ScannedRoute {
+    method: HttpMethod;
+    path: string;
+    file: string;
+    routeDir: string;
+    routeSegments: string[];
+    params: RouteParam[];
+    /** The `+shared.ts` chain folder-cascading config. */
+    sharedFiles: string[];
+}
+
+function normalizeSlashes(path: string): string {
+    return path.split(sep).join('/');
+}
+
+function isRouteSourceFile(fileName: string): boolean {
+    return /\.(?:[cm]?[jt]s|[jt]sx)$/.test(fileName) && !fileName.endsWith('.d.ts');
+}
+
+function methodFromFile(fileName: string): HttpMethod | undefined {
+    if (!isRouteSourceFile(fileName)) {
+        return undefined;
+    }
+    const stem = fileName.replace(/\.(?:[cm]?[jt]s|[jt]sx)$/, '').toLowerCase();
+    return METHOD_FROM_FILE.get(stem);
+}
+
+function sharedFileIn(dir: string): string | undefined {
+    for (const ext of ['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'mts', 'cts']) {
+        const file = join(dir, `+shared.${ext}`);
+        if (existsSync(file)) {
+            return file;
+        }
+    }
+    return undefined;
+}
+
+function physicalRouteSegments(routesDir: string, routeDir: string): string[] {
+    const rel = relative(routesDir, routeDir);
+    if (!rel) {
+        return [];
+    }
+    return normalizeSlashes(rel).split('/').filter(Boolean);
+}
+
+function urlSegment(segment: string): { value?: string; param?: RouteParam } {
+    if (/^\(.+\)$/.test(segment)) {
+        return {};
+    }
+
+    const catchAll = /^\[\.\.\.(.+)\]$/.exec(segment);
+    if (catchAll) {
+        const name = catchAll[1];
+        return {
+            value: `:${name}{.*}`,
+            param: { name, catchAll: true },
+        };
+    }
+
+    const param = /^\[(.+)\]$/.exec(segment);
+    if (param) {
+        const name = param[1];
+        return {
+            value: `:${name}`,
+            param: { name, catchAll: false },
+        };
+    }
+
+    return { value: segment };
+}
+
+export function pathFromSegments(segments: string[]): { path: string; params: RouteParam[] } {
+    const pathSegments: string[] = [];
+    const params: RouteParam[] = [];
+
+    for (const segment of segments) {
+        const converted = urlSegment(segment);
+        if (converted.value) {
+            pathSegments.push(converted.value);
+        }
+        if (converted.param) {
+            params.push(converted.param);
+        }
+    }
+
+    return {
+        path: pathSegments.length > 0 ? `/${pathSegments.join('/')}` : '/',
+        params,
+    };
+}
+
+/**
+ * Every directory under `routesDir` (including itself), so `$types` can be generated for a
+ * folder the moment it's created
+ */
+export async function scanRouteFolders(routesDir: string): Promise<string[]> {
+    if (!existsSync(routesDir)) {
+        return [];
+    }
+    const folders = [routesDir];
+    const walk = async (dir: string): Promise<void> => {
+        for (const entry of await readdir(dir, { withFileTypes: true })) {
+            if (entry.isDirectory() && entry.name !== 'node_modules') {
+                const full = join(dir, entry.name);
+                folders.push(full);
+                await walk(full);
+            }
+        }
+    };
+    await walk(routesDir);
+    return folders;
+}
+
+/** Folder-derived params for any directory under `routesDir` (used for middleware `$types`). */
+export function routeParamsForDir(routesDir: string, dir: string): RouteParam[] {
+    return pathFromSegments(physicalRouteSegments(routesDir, dir)).params;
+}
+
+/** The ordered `+shared.ts` chain that applies to a directory. */
+export function sharedFilesForDir(routesDir: string, dir: string): string[] {
+    const segments = physicalRouteSegments(routesDir, dir);
+    const dirs = [routesDir];
+
+    let current = routesDir;
+    for (const segment of segments) {
+        current = join(current, segment);
+        dirs.push(current);
+    }
+
+    return dirs.map(sharedFileIn).filter((file): file is string => Boolean(file));
+}
+
+export async function scanRoutes(routesDir: string): Promise<ScannedRoute[]> {
+    if (!existsSync(routesDir)) {
+        return [];
+    }
+
+    const files = await glob('**/+*.{ts,tsx,js,jsx,mjs,cjs,mts,cts}', {
+        cwd: routesDir,
+        absolute: true,
+        onlyFiles: true,
+    });
+
+    const routes: ScannedRoute[] = [];
+
+    for (const file of files) {
+        const method = methodFromFile(basename(file));
+        if (!method) {
+            continue;
+        }
+
+        const routeDir = dirname(file);
+        const routeSegments = physicalRouteSegments(routesDir, routeDir);
+        const { path, params } = pathFromSegments(routeSegments);
+
+        routes.push({
+            method,
+            path,
+            file,
+            routeDir,
+            routeSegments,
+            params,
+            sharedFiles: sharedFilesForDir(routesDir, routeDir),
+        });
+    }
+
+    return routes.sort((left, right) => {
+        const pathOrder = left.path.localeCompare(right.path);
+        if (pathOrder !== 0) {
+            return pathOrder;
+        }
+        return METHOD_ORDER.indexOf(left.method) - METHOD_ORDER.indexOf(right.method);
+    });
+}

@@ -1,0 +1,25 @@
+{
+    "name": "@guri/example-demo",
+    "private": true,
+    "type": "module",
+    "description": "TypeScript Hono demo for guri file routing and OpenAPI generation.",
+    "scripts": {
+        "sync": "node ../dist/cli.js sync",
+        "dev": "node ../dist/cli.js serve",
+        "serve": "node ../dist/cli.js serve",
+        "build": "node ../dist/cli.js build",
+        "typecheck": "tsc --noEmit",
+        "test": "vitest --run"
+    },
+    "dependencies": {
+        "@hono/node-server": "^2.0.3",
+        "guri": "link:..",
+        "hono": "^4.12.18",
+        "zod": "^4.4.3"
+    },
+    "devDependencies": {
+        "typescript": "^5.8.3",
+        "vite-node": "^3.2.4",
+        "vitest": "^3.2.0"
+    }
+}
