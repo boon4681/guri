@@ -2,14 +2,14 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import * as prompts from '@clack/prompts';
 import { buildGiriApp } from './app';
-import { load } from './loader/loader';
+import { findConfigPath, load } from './loader/loader';
 import { createWatchUpdater, syncProject } from './generator';
 import { loadLifecycle, runInit } from './lifecycle';
-import { log, muted } from './logger';
-import type { Services, GiriConfig, GiriFetchHandler, GiriServer } from './types';
+import { color, log, muted } from './logger';
+import type { Services, GiriConfig, GiriFetchHandler } from './types';
 
 interface ParsedFlags {
     port?: number;
@@ -158,7 +158,7 @@ async function missingDeps(cwd: string, candidates: string[]): Promise<string[]>
     let pkg: Record<string, unknown> = {};
     try {
         pkg = JSON.parse(await readFile(join(cwd, 'package.json'), 'utf8')) as Record<string, unknown>;
-    } catch {}
+    } catch { }
 
     const present = new Set<string>();
     for (const field of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
@@ -240,7 +240,7 @@ async function initProject(cwd: string, flags: InitFlags): Promise<void> {
     if (!existsSync(join(cwd, 'package.json'))) {
         throw new Error(
             'No package.json found. Run `giri init` inside an existing project - set one up first ' +
-                '(e.g. `npm init -y` and install typescript), then re-run.',
+            '(e.g. `npm init -y` and install typescript), then re-run.',
         );
     }
 
@@ -348,90 +348,137 @@ function displayHost(address: string): string {
 }
 
 async function serveProject(config: GiriConfig, flags: ParsedFlags): Promise<void> {
-    const initial = await syncProject(config);
-    log.success(
-        `synced ${initial.routes.length} route${initial.routes.length === 1 ? '' : 's'} ${muted(`at ${initial.paths.outDir}`)}`,
-        'sync',
-    );
+    const { watch } = await import('node:fs');
+    let stop: (() => Promise<void>) | undefined;
+    const boot = async (cfg: GiriConfig): Promise<void> => {
+        const initial = await syncProject(cfg);
+        log.success(
+            `synced ${initial.routes.length} route${initial.routes.length === 1 ? '' : 's'} ${muted(`at ${initial.paths.outDir}`)}`,
+            'sync',
+        );
+        const lifecycle = await loadLifecycle();
+        const services: Services = await runInit(lifecycle);
 
-    // Run the optional src/main.ts `init()` once, before serving. It owns long-lived
-    // services (DB pools, etc.) that must survive watch rebuilds
-    const lifecycle = await loadLifecycle();
-    const services: Services = await runInit(lifecycle);
+        let current = await buildGiriApp(cfg, { services });
 
-    let current = await buildGiriApp(config, { services });
+        const port = flags.port ?? cfg.server?.port ?? 3000;
+        const hostname = flags.hostname ?? cfg.server?.hostname;
 
-    const port = flags.port ?? config.server?.port ?? 3000;
-    const hostname = flags.hostname ?? config.server?.hostname;
+        const closers: Array<() => void | Promise<void>> = [];
 
-    if (flags.watch) {
-        // Watch the whole `src/`, not just `src/routes`: a route's imports (auth.ts, db.ts, …)
-        // and `main.ts` live here, and editing them must rebuild too.
-        const srcDir = resolve(current.paths.routesDir, '..');
-        if (existsSync(srcDir)) {
-            let timer: NodeJS.Timeout | undefined;
-            let syncing = false;
-            const changed = new Set<string>();
-            const { watch } = await import('node:fs');
-            const updater = createWatchUpdater(config, initial);
-            const hmrCount = new Map<string, number>();
-            const bump = (key: string): number => {
-                const next = (hmrCount.get(key) ?? 0) + 1;
-                hmrCount.set(key, next);
-                return next;
-            };
+        if (flags.watch) {
+            // Watch the whole `src/`, not just `src/routes`: a route's imports (auth.ts, db.ts, …)
+            // and `main.ts` live here, and editing them must rebuild too.
+            const srcDir = resolve(current.paths.routesDir, '..');
+            if (existsSync(srcDir)) {
+                let timer: NodeJS.Timeout | undefined;
+                let syncing = false;
+                const changed = new Set<string>();
+                const updater = createWatchUpdater(cfg, initial);
+                const hmrCount = new Map<string, number>();
+                const bump = (key: string): number => {
+                    const next = (hmrCount.get(key) ?? 0) + 1;
+                    hmrCount.set(key, next);
+                    return next;
+                };
 
-            // Drain queued changes, applying each through the incremental updater (it falls back
-            // to a full sync for structural changes). Serialized so two drains never overlap;
-            // changes arriving mid-drain are picked up by the loop or the trailing re-check.
-            const flush = async (): Promise<void> => {
-                if (syncing) {
-                    return;
-                }
-                syncing = true;
-                try {
-                    while (changed.size > 0) {
-                        const batch = [...changed];
-                        changed.clear();
-                        for (const name of batch) {
-                            const outcome = await updater.apply(name || null);
-                            const rel = name ? `src/${name.replace(/\\/g, '/')}` : 'src';
-                            log.change(outcome === 'full' ? 'sync' : 'update', rel, bump(rel));
-                        }
-                        current = await buildGiriApp(config, { services });
+                // Drain queued changes, applying each through the incremental updater (it falls back
+                // to a full sync for structural changes). Serialized so two drains never overlap;
+                // changes arriving mid-drain are picked up by the loop or the trailing re-check.
+                const flush = async (): Promise<void> => {
+                    if (syncing) {
+                        return;
                     }
-                } catch (error) {
-                    log.error(error instanceof Error ? error.message : String(error), 'watch');
-                } finally {
-                    syncing = false;
-                }
-                if (changed.size > 0) {
-                    void flush();
-                }
-            };
+                    syncing = true;
+                    try {
+                        while (changed.size > 0) {
+                            const batch = [...changed];
+                            changed.clear();
+                            for (const name of batch) {
+                                const outcome = await updater.apply(name || null);
+                                const rel = name ? `src/${name.replace(/\\/g, '/')}` : 'src';
+                                log.change(outcome === 'full' ? 'sync' : 'update', rel, bump(rel));
+                            }
+                            current = await buildGiriApp(cfg, { services });
+                        }
+                    } catch (error) {
+                        log.error(error instanceof Error ? error.message : String(error), 'watch');
+                    } finally {
+                        syncing = false;
+                    }
+                    if (changed.size > 0) {
+                        void flush();
+                    }
+                };
 
-            watch(srcDir, { recursive: true }, (_event, filename) => {
-                changed.add(filename ? filename.toString() : '');
-                clearTimeout(timer);
-                timer = setTimeout(() => void flush(), 150);
-            });
+                const watcher = watch(srcDir, { recursive: true }, (_event, filename) => {
+                    changed.add(filename ? filename.toString() : '');
+                    clearTimeout(timer);
+                    timer = setTimeout(() => void flush(), 150);
+                });
+                closers.push(() => {
+                    clearTimeout(timer);
+                    watcher.close();
+                });
+            }
         }
+
+        const handler: GiriFetchHandler = (request) => cfg.adapter.fetch(current.app, request);
+
+        const server = cfg.adapter.serve(handler, { port, hostname }, (info) => {
+            log.ready(`http://${displayHost(info.address)}:${info.port}`);
+        });
+
+        stop = async () => {
+            for (const close of closers) {
+                await close();
+            }
+            try {
+                await server.close();
+            } catch { }
+            if (lifecycle.teardown) {
+                await lifecycle.teardown(services);
+            }
+        };
+    };
+
+    await boot(config);
+    const configPath = flags.watch ? findConfigPath(resolve(process.cwd())) : undefined;
+    if (configPath) {
+        let timer: NodeJS.Timeout | undefined;
+        let restarting = false;
+        const configName = basename(configPath);
+
+        const restart = async (): Promise<void> => {
+            if (restarting) {
+                return;
+            }
+            restarting = true;
+            try {
+                log.info(`${color.green('restart')} ${configName} changed`, 'config');
+                delete require.cache[configPath];
+                const next = await load({ throwOnError: true });
+                await stop?.();
+                await boot(next);
+            } catch (error) {
+                log.error(error instanceof Error ? error.message : String(error), 'config');
+                log.info('kept the previous server running — fix the config and save again', 'config');
+            } finally {
+                restarting = false;
+            }
+        };
+        watch(dirname(configPath), { recursive: false }, (_event, filename) => {
+            if (filename && basename(filename.toString()) === configName) {
+                clearTimeout(timer);
+                timer = setTimeout(() => void restart(), 150);
+            }
+        });
     }
 
-    const handler: GiriFetchHandler = (request) => config.adapter.fetch(current.app, request);
-
-    const server = config.adapter.serve(handler, { port, hostname }, (info) => {
-        log.ready(`http://${displayHost(info.address)}:${info.port}`);
-    });
-
-    registerShutdown(server, lifecycle, services);
+    registerShutdown(() => stop?.());
 }
 
-function registerShutdown(
-    server: GiriServer,
-    lifecycle: { teardown?: (services: Services) => void | Promise<void> },
-    services: Services,
-): void {
+function registerShutdown(cleanup: () => void | Promise<void>): void {
     let shuttingDown = false;
     const shutdown = async (): Promise<void> => {
         if (shuttingDown) {
@@ -439,10 +486,7 @@ function registerShutdown(
         }
         shuttingDown = true;
         try {
-            await server.close();
-            if (lifecycle.teardown) {
-                await lifecycle.teardown(services);
-            }
+            await cleanup();
         } catch (error) {
             log.error(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;

@@ -44,33 +44,47 @@ export const safeRegister = async () => {
     return res;
 }
 
-export const load = async () => {
-    const defaultTsConfigExists = existsSync(resolve('giri.config.ts'));
-    const defaultJsConfigExists = existsSync(resolve('giri.config.js'));
-    const defaultConfigPath = defaultTsConfigExists ? 'giri.config.ts' : defaultJsConfigExists ? 'giri.config.js' : undefined
-    if (!defaultConfigPath) {
-        log.error("Config file not found.")
-        exit(1)
+export const findConfigPath = (cwd: string = resolve()): string | undefined => {
+    for (const name of ['giri.config.ts', 'giri.config.js']) {
+        const path = resolve(cwd, name);
+        if (existsSync(path)) {
+            return path;
+        }
     }
+    return undefined;
+};
 
-    const path: string = resolve(defaultConfigPath);
-    if (!existsSync(path)) {
-        log.error(`${path} file does not exist`);
-        exit(1)
+export const load = async (opts: { throwOnError?: boolean } = {}) => {
+    const fail = (message: string): never => {
+        if (opts.throwOnError) {
+            throw new Error(message);
+        }
+        log.error(message);
+        exit(1);
+    };
+
+    const path = findConfigPath();
+    if (!path) {
+        fail("Config file not found.")
     }
 
     const { unregister } = await safeRegister();
-    const required = require(`${path}`);
-    const content = required.default ?? required;
+    let content: unknown;
+    try {
+        const required = require(`${path}`);
+        content = required.default ?? required;
+    } finally { }
     unregister();
-
     // get response and then check by each dialect independently
     const res = Value.Check(configSchema, content);
     if (!res) {
-        for (const error of [...Value.Errors(configSchema, content)]) {
-            log.error(error.message)
+        const messages = [...Value.Errors(configSchema, content)].map((error) => error.message);
+        if (!opts.throwOnError) {
+            for (const message of messages) {
+                log.error(message);
+            }
         }
-        exit(1)
+        fail(messages.join('\n'));
     }
     return content as Static<typeof configSchema>
 }
