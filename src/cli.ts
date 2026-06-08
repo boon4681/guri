@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import * as prompts from '@clack/prompts';
-import { buildGiriApp } from './app';
+import { buildGiriApp, registerAliasResolver } from './app';
 import { findConfigPath, load } from './loader/loader';
 import { createWatchUpdater, syncProject } from './generator';
 import { loadLifecycle, runInit } from './lifecycle';
@@ -356,6 +356,9 @@ async function serveProject(config: GiriConfig, flags: ParsedFlags): Promise<voi
             `synced ${initial.routes.length} route${initial.routes.length === 1 ? '' : 's'} ${muted(`at ${initial.paths.outDir}`)}`,
             'sync',
         );
+        const closers: Array<() => void | Promise<void>> = [];
+        closers.push(registerAliasResolver(cfg.alias, initial.paths.cwd));
+
         const lifecycle = await loadLifecycle();
         const services: Services = await runInit(lifecycle);
 
@@ -363,8 +366,6 @@ async function serveProject(config: GiriConfig, flags: ParsedFlags): Promise<voi
 
         const port = flags.port ?? cfg.server?.port ?? 3000;
         const hostname = flags.hostname ?? cfg.server?.hostname;
-
-        const closers: Array<() => void | Promise<void>> = [];
 
         if (flags.watch) {
             // Watch the whole `src/`, not just `src/routes`: a route's imports (auth.ts, db.ts, …)
