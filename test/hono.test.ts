@@ -382,6 +382,46 @@ describe('hono adapter', () => {
         await expect(tampered.json()).resolves.toEqual({ token: false });
     });
 
+    it('catches a throwing middleware/handler and returns 500 (logging the route)', async () => {
+        const adapter = hono();
+        const app = adapter.createApp();
+
+        adapter.register(app, {
+            method: 'GET',
+            path: '/boom',
+            middleware: [
+                async () => {
+                    throw new Error('kaboom from middleware');
+                },
+            ],
+            handle: (c) => c.json({ ok: true }),
+        });
+        adapter.register(app, {
+            method: 'GET',
+            path: '/handler-boom',
+            middleware: [],
+            handle: () => {
+                throw new Error('kaboom from handler');
+            },
+        });
+
+        const errors: unknown[] = [];
+        const original = console.error;
+        console.error = (...args: unknown[]) => errors.push(args);
+        try {
+            const mw = await adapter.fetch(app, new Request('http://giri.test/boom'));
+            expect(mw.status).toBe(500);
+
+            const handler = await adapter.fetch(app, new Request('http://giri.test/handler-boom'));
+            expect(handler.status).toBe(500);
+        } finally {
+            console.error = original;
+        }
+
+        // The full stack (not just the message) is logged so the user can locate the throw.
+        expect(errors.some((args) => String(args).includes('kaboom from middleware'))).toBe(true);
+    });
+
     it('fromHono throws off the Hono adapter (no native context)', async () => {
         const bridged = fromHono(async (_c, next) => {
             await next();

@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import {
     buildModuleGraph,
@@ -15,10 +15,13 @@ import { extractRouteMeta } from './route-meta';
 import { syncProject, type SyncResult } from './sync';
 import { slash } from './util';
 
-export type ChangeOutcome = 'incremental' | 'full';
+export type ChangeOutcome = 'incremental' | 'full' | 'skip';
 
 export interface WatchUpdater {
-    /** Apply one watch event; returns whether it was handled incrementally or fell back to full. */
+    /**
+     * Apply one watch event. Returns 'incremental'/'full' for real changes, or 'skip' for
+     * directory notifications (the real edit always arrives as a separate file event).
+     */
     apply(filename: string | null): Promise<ChangeOutcome>;
 }
 
@@ -83,6 +86,14 @@ export function createWatchUpdater(
             const file = slash(abs);
             if (!existsSync(abs)) {
                 return fullResync();
+            }
+
+            // Ignore directory notifications. Windows' recursive fs.watch emits a `change` for a
+            // folder whenever a file inside it is touched - including the access-time bumps from
+            // the schema TypeScript program reading every route - which would otherwise trigger a
+            // full resync per folder (a rebuild storm). The real edit always arrives as a file event.
+            if (statSync(abs).isDirectory()) {
+                return 'skip';
             }
 
             const graph = buildModuleGraph(paths.cwd);

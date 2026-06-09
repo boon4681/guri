@@ -77,6 +77,21 @@ describe('createWatchUpdater', () => {
         expect(await updater.apply('auth.ts')).toBe('full');
     });
 
+    it('skips directory notifications instead of resyncing (no rebuild storm)', async () => {
+        const routesDir = join(tmp, 'src', 'routes');
+        const outDir = join(tmp, '.giri');
+        await mkdir(join(routesDir, 'users'), { recursive: true });
+        await writeFile(join(routesDir, 'users', '+get.ts'), 'export const handle = (c) => c.json({ ok: true });');
+
+        const initial = await syncProject({ outDir }, { cwd: tmp });
+        const updater = createWatchUpdater({ outDir }, initial);
+
+        // A folder event (what Windows' recursive watch emits when files inside are touched) must
+        // not trigger a full resync.
+        expect(await updater.apply('routes')).toBe('skip');
+        expect(await updater.apply('routes/users')).toBe('skip');
+    });
+
     it('falls back to a full sync when the platform reports no filename', async () => {
         const routesDir = join(tmp, 'src', 'routes');
         const outDir = join(tmp, '.giri');

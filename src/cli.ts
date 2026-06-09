@@ -348,6 +348,8 @@ function displayHost(address: string): string {
 }
 
 async function serveProject(config: GiriConfig, flags: ParsedFlags): Promise<void> {
+    Error.stackTraceLimit = 30;
+
     const { watch } = await import('node:fs');
     let stop: (() => Promise<void>) | undefined;
     const boot = async (cfg: GiriConfig): Promise<void> => {
@@ -395,12 +397,22 @@ async function serveProject(config: GiriConfig, flags: ParsedFlags): Promise<voi
                         while (changed.size > 0) {
                             const batch = [...changed];
                             changed.clear();
+                            let dirty = false;
                             for (const name of batch) {
                                 const outcome = await updater.apply(name || null);
+                                if (outcome === 'skip') {
+                                    continue;
+                                }
+                                dirty = true;
                                 const rel = name ? `src/${name.replace(/\\/g, '/')}` : 'src';
                                 log.change(outcome === 'full' ? 'sync' : 'update', rel, bump(rel));
+                                if (outcome === 'full') {
+                                    break;
+                                }
                             }
-                            current = await buildGiriApp(cfg, { services });
+                            if (dirty) {
+                                current = await buildGiriApp(cfg, { services });
+                            }
                         }
                     } catch (error) {
                         log.error(error instanceof Error ? error.message : String(error), 'watch');

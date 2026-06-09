@@ -9,6 +9,7 @@ import {
     toResponse,
     typedResponseToResponse,
 } from '../context';
+import { log } from '../logger';
 import { nativeContextBrand } from '../types';
 import type {
     Context as GiriContext,
@@ -59,8 +60,15 @@ async function routeHandler(honoContext: HonoContext, route: GiriRouteRegistrati
         cookieSecret: route.cookieSecret,
         cookies: honoCookieJar,
     });
-    const result = await composeMiddleware(route.middleware, route.handle, context);
-    return toResponse(result, context);
+    try {
+        const result = await composeMiddleware(route.middleware, route.handle, context);
+        return toResponse(result, context);
+    } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        log.error(`${route.method} ${route.path} - ${err.message}`, 'request');
+        console.error(err.stack ?? err);
+        return new Response('Internal Server Error', { status: 500 });
+    }
 }
 
 function syncHonoVars(honoContext: HonoContext, giriContext: GiriContext): void {
