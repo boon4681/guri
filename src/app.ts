@@ -104,17 +104,8 @@ function matchAlias(request: string, key: string): string | undefined {
         }
         return undefined;
     }
-
-    if (request === key) {
-        return '';
-    }
-
-    const prefix = `${key}/`;
-    if (request.startsWith(prefix)) {
-        return request.slice(prefix.length);
-    }
-
-    return undefined;
+    
+    return request === key ? '' : undefined;
 }
 
 function resolveAliasRequest(
