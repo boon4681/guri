@@ -1,7 +1,7 @@
 import { existsSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { buildImportGraph } from '../loader/import-graph';
 import {
-    buildModuleGraph,
     collectDependents,
     purgeGeneratedModules,
     purgeModules,
@@ -101,7 +101,7 @@ export function createWatchUpdater(
                 return 'skip';
             }
 
-            const graph = buildModuleGraph(paths.cwd);
+            const graph = await buildImportGraph(config, paths.cwd);
             const isRoute = routes.some((candidate) => slash(candidate.file) === file);
 
             if (!graph.nodes.has(file) && !isRoute) {

@@ -64,10 +64,11 @@ describe('createWatchUpdater', () => {
         expect(after.paths?.['/secret']?.get).toBeUndefined();
     });
 
-    it('treats a non-route source file (an imported helper) as a full sync', async () => {
+    it('treats an unimported source file as a full sync', async () => {
         const routesDir = join(tmp, 'src', 'routes');
         const outDir = join(tmp, '.giri');
         await mkdir(routesDir, { recursive: true });
+
         await writeFile(join(tmp, 'src', 'auth.ts'), 'export const auth = () => {};');
         await writeFile(join(routesDir, '+get.ts'), 'export const handle = (c) => c.json({ ok: true });');
 
@@ -75,6 +76,48 @@ describe('createWatchUpdater', () => {
         const updater = createWatchUpdater({ outDir }, initial);
 
         expect(await updater.apply('auth.ts')).toBe('full');
+    });
+
+    it('rebuilds a route incrementally when a helper it imports changes', async () => {
+        const routesDir = join(tmp, 'src', 'routes');
+        const outDir = join(tmp, '.giri');
+        await mkdir(join(routesDir, 'users'), { recursive: true });
+        // A regular (statically-analyzed) route that imports a project-local helper. The route is
+        // never `require`d during sync, so the import edge must come from static analysis, not the
+        // runtime require.cache — otherwise editing the helper falls back to a full resync.
+        await writeFile(join(tmp, 'src', 'db.ts'), 'export const listUsers = () => [{ id: "1" }];');
+        await writeFile(
+            join(routesDir, 'users', '+get.ts'),
+            'import { listUsers } from "../../db";\nexport const handle = (c) => c.json({ users: listUsers() });',
+        );
+
+        const initial = await syncProject({ outDir }, { cwd: tmp });
+        const updater = createWatchUpdater({ outDir }, initial);
+
+        await writeFile(join(tmp, 'src', 'db.ts'), 'export const listUsers = () => [{ id: "2" }];');
+        expect(await updater.apply('db.ts')).toBe('incremental');
+    });
+
+    it('rebuilds a route incrementally when a transitively imported file changes', async () => {
+        const routesDir = join(tmp, 'src', 'routes');
+        const outDir = join(tmp, '.giri');
+        await mkdir(join(routesDir, 'users'), { recursive: true });
+        // route -> db -> models: the deepest file must still map back to the route.
+        await writeFile(join(tmp, 'src', 'models.ts'), 'export type User = { id: string };');
+        await writeFile(
+            join(tmp, 'src', 'db.ts'),
+            'import type { User } from "./models";\nexport const listUsers = (): User[] => [{ id: "1" }];',
+        );
+        await writeFile(
+            join(routesDir, 'users', '+get.ts'),
+            'import { listUsers } from "../../db";\nexport const handle = (c) => c.json({ users: listUsers() });',
+        );
+
+        const initial = await syncProject({ outDir }, { cwd: tmp });
+        const updater = createWatchUpdater({ outDir }, initial);
+
+        await writeFile(join(tmp, 'src', 'models.ts'), 'export type User = { id: number };');
+        expect(await updater.apply('models.ts')).toBe('incremental');
     });
 
     it('skips directory notifications instead of resyncing (no rebuild storm)', async () => {

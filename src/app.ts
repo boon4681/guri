@@ -112,7 +112,7 @@ function matchAlias(request: string, key: string): string | undefined {
     return request === key ? '' : undefined;
 }
 
-function resolveAliasRequest(
+export function resolveAliasRequest(
     request: string,
     alias: GiriConfig['alias'],
     cwd: string,

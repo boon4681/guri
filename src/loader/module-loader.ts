@@ -1,8 +1,9 @@
 /**
- * Unproven method on (other javascript runtime) to build do module-graph by using NodeJS `require.cache`: each module records
- * its `children` and reflects the *previous* build
+ * `require.cache` helpers for the dev watcher: purge stale modules so the next build re-evaluates
+ * them. The import graph itself is built statically in `import-graph.ts` (require.cache only
+ * records edges for modules that were actually evaluated, which misses statically-synced routes).
  */
-import { join, resolve, sep } from 'node:path';
+import { resolve, sep } from 'node:path';
 
 export interface ModuleGraph {
     importers: Map<string, Set<string>>;
@@ -14,36 +15,6 @@ const toSlash = (path: string): string => path.split(sep).join('/');
 const isProjectModule = (id: string, root: string): boolean => {
     return id.startsWith(root) && !id.includes(`${sep}node_modules${sep}`) && !id.includes(`${sep}.giri${sep}`);
 }
-
-export const buildModuleGraph = (cwd: string): ModuleGraph => {
-    const root = resolve(cwd) + sep;
-    const importers = new Map<string, Set<string>>();
-    const nodes = new Set<string>();
-    for (const id of Object.keys(require.cache)) {
-        if (!isProjectModule(id, root)) {
-            continue;
-        }
-        const mod = require.cache[id];
-        if (!mod) {
-            continue;
-        }
-        nodes.add(toSlash(id));
-        for (const child of mod.children) {
-            if (!isProjectModule(child.id, root)) {
-                continue;
-            }
-            nodes.add(toSlash(child.id));
-            const dep = toSlash(child.id);
-            let set = importers.get(dep);
-            if (!set) {
-                set = new Set();
-                importers.set(dep, set);
-            }
-            set.add(toSlash(id));
-        }
-    }
-    return { importers, nodes };
-};
 
 export const collectDependents = (graph: ModuleGraph, start: string): Set<string> => {
     const out = new Set<string>([start]);
