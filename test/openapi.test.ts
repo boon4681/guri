@@ -72,6 +72,33 @@ describe('buildOpenApiDocument', () => {
         });
     });
 
+    it('emits tags/summary/description/operationId/deprecated and doc-level tags', () => {
+        const a = '/routes/ide/draft/+get.ts';
+        const b = '/routes/ide/file/+get.ts';
+        const routes = [
+            route({ method: 'GET', path: '/ide/draft', file: a }),
+            route({ method: 'GET', path: '/ide/file', file: b }),
+        ];
+        const openapiByFile = new Map([
+            [a, { tags: ['IDE'], summary: 'Get draft', operationId: 'getDraft', deprecated: true }],
+            [b, { tags: ['IDE', 'Files'], description: 'A file' }],
+        ]);
+
+        const doc = buildOpenApiDocument(paths, routes, { openapiByFile }) as any;
+
+        const draft = doc.paths['/ide/draft'].get;
+        expect(draft.tags).toEqual(['IDE']);
+        expect(draft.summary).toBe('Get draft');
+        expect(draft.operationId).toBe('getDraft');
+        expect(draft.deprecated).toBe(true);
+
+        expect(doc.paths['/ide/file'].get.tags).toEqual(['IDE', 'Files']);
+        expect(doc.paths['/ide/file'].get.description).toBe('A file');
+
+        // Doc-level tag list, in first-seen order, deduped across routes.
+        expect(doc.tags).toEqual([{ name: 'IDE' }, { name: 'Files' }]);
+    });
+
     it('hoists $defs into components.schemas and rewrites $ref', () => {
         const file = '/routes/tree/+get.ts';
         const responses = new Map<string, RouteResponses>([

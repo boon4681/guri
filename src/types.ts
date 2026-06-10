@@ -86,7 +86,7 @@ export interface GiriRequest<Input extends ValidatedInput = ValidatedInput> {
     valid<K extends keyof Input & ('body' | 'query')>(key: K): Input[K];
     /** Read a request cookie by name, or `undefined` if absent. */
     cookie(name: string): string | undefined;
-    /** All request cookies as a name→value map. */
+    /** All request cookies as a name: value map. */
     cookies(): Record<string, string>;
     /**
      * Read and verify a signed cookie. Resolves to the original value, `false` if the
@@ -317,7 +317,20 @@ export interface RouteInput {
 export interface RouteOpenApi {
     /** Omit this route from the generated `openapi.json` (it still serves normally). */
     hidden?: boolean;
-    // Room to grow: summary, description, tags, deprecated, operationId, …
+    /**
+     * OpenAPI tags - the grouping in doc viewers. On a `+shared.ts` they apply to every route in the
+     * folder; the chain is merged and de-duplicated, so a route's tags add to
+     * its folders'.
+     */
+    tags?: string[];
+    /** Short operation summary. Cascades down the chain (a verb file overrides its folders). */
+    summary?: string;
+    /** Longer operation description. Cascades down the chain (a verb file overrides its folders). */
+    description?: string;
+    /** Marks the operation(s) deprecated. On a `+shared.ts` it deprecates the whole folder. */
+    deprecated?: boolean;
+    /** Unique operationId. Verb-file only - it is never inherited from a `+shared.ts`. */
+    operationId?: string;
 }
 
 export type RouteOpenApiConfig = RouteOpenApi | boolean;

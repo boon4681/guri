@@ -4,7 +4,7 @@ import type { OpenAPIV3_1 } from 'openapi-types';
 import type { ScannedRoute } from '../routes';
 import type { GiriPaths } from '../types';
 import type { RouteInputSchemas } from './inputs';
-import type { RouteSecurity } from './route-meta';
+import type { RouteOpenApiMeta, RouteSecurity } from './route-meta';
 import type { JSONSchema, ResponseSchema, RouteResponses } from './schema';
 import { writeJson } from './util';
 
@@ -13,6 +13,7 @@ export interface OpenApiData {
     inputsByFile?: Map<string, RouteInputSchemas>;
     securityByFile?: Map<string, RouteSecurity>;
     hiddenFiles?: Set<string>;
+    openapiByFile?: Map<string, RouteOpenApiMeta>;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -132,6 +133,7 @@ export function buildOpenApiDocument(
     const documentPaths: JsonObject = {};
     const schemas: JsonObject = {};
     const securitySchemes: JsonObject = {};
+    const tagOrder: string[] = [];
 
     for (const route of routes) {
         if (data.hiddenFiles?.has(route.file)) {
@@ -140,12 +142,34 @@ export function buildOpenApiDocument(
         const responses = data.responsesByFile?.get(route.file);
         const input = data.inputsByFile?.get(route.file);
         const security = data.securityByFile?.get(route.file);
+        const meta = data.openapiByFile?.get(route.file);
 
         for (const [name, schema] of Object.entries(responses?.$defs ?? {})) {
             schemas[name] = rewriteRefs(schema);
         }
 
-        const operation: JsonObject = { responses: buildResponses(responses?.responses ?? []) };
+        const operation: JsonObject = {};
+        if (meta?.tags && meta.tags.length > 0) {
+            operation.tags = meta.tags;
+            for (const tag of meta.tags) {
+                if (!tagOrder.includes(tag)) {
+                    tagOrder.push(tag);
+                }
+            }
+        }
+        if (meta?.summary) {
+            operation.summary = meta.summary;
+        }
+        if (meta?.description) {
+            operation.description = meta.description;
+        }
+        if (meta?.operationId) {
+            operation.operationId = meta.operationId;
+        }
+        if (meta?.deprecated) {
+            operation.deprecated = true;
+        }
+        operation.responses = buildResponses(responses?.responses ?? []);
 
         const parameters = [...pathParameters(route), ...queryParameters(input?.query)];
         if (parameters.length > 0) {
@@ -180,6 +204,9 @@ export function buildOpenApiDocument(
         info: readProjectInfo(paths.cwd),
         paths: documentPaths,
     };
+    if (tagOrder.length > 0) {
+        document.tags = tagOrder.map((name) => ({ name }));
+    }
     const components: JsonObject = {};
     if (Object.keys(schemas).length > 0) {
         components.schemas = schemas;

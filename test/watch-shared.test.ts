@@ -34,8 +34,6 @@ describe('watch: +shared.ts change', () => {
         );
 
         const config = defineConfig({ adapter: hono(), outDir });
-
-        // Mirror real serve: sync, then build (populates require.cache → the module graph).
         const initial = await syncProject(config, { cwd: tmp });
         const updater = createWatchUpdater(config, initial);
         expect(await roleFrom(config)).toBe('member');

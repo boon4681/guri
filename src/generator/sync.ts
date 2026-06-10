@@ -15,7 +15,7 @@ import type { RouteInputSchemas } from './inputs';
 import { writeManifest } from './manifest';
 import { writeOpenApi } from './openapi';
 import { writeParamTypes, type TypeFolder } from './param-types';
-import { extractRouteMeta, type RouteSecurity } from './route-meta';
+import { extractRouteMeta, type RouteOpenApiMeta, type RouteSecurity } from './route-meta';
 import { writeRouteTypes } from './route-types';
 import type { RouteResponses } from './schema';
 import { writeTsConfig } from './tsconfig';
@@ -48,6 +48,7 @@ export interface SyncData {
     inputsByFile: Map<string, RouteInputSchemas>;
     securityByFile: Map<string, RouteSecurity>;
     hiddenFiles: Set<string>;
+    openapiByFile: Map<string, RouteOpenApiMeta>;
 }
 
 export interface SyncResult {
@@ -92,9 +93,10 @@ interface RuntimeMeta {
     inputsByFile: Map<string, RouteInputSchemas>;
     securityByFile: Map<string, RouteSecurity>;
     hiddenFiles: Set<string>;
+    openapiByFile: Map<string, RouteOpenApiMeta>;
 }
 
-/** Load route modules once to derive input schemas, middleware security, and openapi visibility. */
+/** Load route modules once to derive input schemas, middleware security, and openapi metadata. */
 async function extractMeta(
     config: Pick<GiriConfig, 'alias'>,
     paths: GiriPaths,
@@ -103,8 +105,9 @@ async function extractMeta(
     const inputsByFile = new Map<string, RouteInputSchemas>();
     const securityByFile = new Map<string, RouteSecurity>();
     const hiddenFiles = new Set<string>();
+    const openapiByFile = new Map<string, RouteOpenApiMeta>();
     if (routes.length === 0) {
-        return { inputsByFile, securityByFile, hiddenFiles };
+        return { inputsByFile, securityByFile, hiddenFiles, openapiByFile };
     }
 
     try {
@@ -119,12 +122,15 @@ async function extractMeta(
             if (entry.hidden) {
                 hiddenFiles.add(file);
             }
+            if (entry.openapi) {
+                openapiByFile.set(file, entry.openapi);
+            }
         }
     } catch (error) {
         console.warn(`giri: skipped input/security generation (${(error as Error).message}).`);
     }
 
-    return { inputsByFile, securityByFile, hiddenFiles };
+    return { inputsByFile, securityByFile, hiddenFiles, openapiByFile };
 }
 
 /**
@@ -150,8 +156,8 @@ export async function syncProject<App>(
 
     // Response schemas need the generated tsconfig + $types to resolve, so extract last.
     const responsesByFile = await extractResponses(paths, routes);
-    const { inputsByFile, securityByFile, hiddenFiles } = await extractMeta(config, paths, routes);
-    const data: SyncData = { responsesByFile, inputsByFile, securityByFile, hiddenFiles };
+    const { inputsByFile, securityByFile, hiddenFiles, openapiByFile } = await extractMeta(config, paths, routes);
+    const data: SyncData = { responsesByFile, inputsByFile, securityByFile, hiddenFiles, openapiByFile };
     await writeManifest(paths, routes, data);
     await writeOpenApi(paths, routes, data);
 

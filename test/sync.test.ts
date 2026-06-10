@@ -14,6 +14,37 @@ describe('syncProject', () => {
         await rm(tmp, { recursive: true, force: true });
     });
 
+    it('cascades openapi tags from +shared.ts and merges them onto routes', async () => {
+        const routesDir = join(tmp, 'src', 'routes');
+        const outDir = join(tmp, '.giri');
+        await mkdir(join(routesDir, 'ide', 'draft'), { recursive: true });
+
+        // Folder-level group applied to every route under ide/.
+        await writeFile(join(routesDir, 'ide', '+shared.ts'), 'export const openapi = { tags: ["IDE"] };');
+        // A route adds its own tag (merged) plus operation metadata.
+        await writeFile(
+            join(routesDir, 'ide', 'draft', '+get.ts'),
+            [
+                'export const openapi = { tags: ["Drafts"], summary: "Get draft", operationId: "getDraft" };',
+                'export const handle = (c) => c.json({ ok: true });',
+            ].join('\n'),
+        );
+        // A sibling route under ide/ inherits just the folder tag.
+        await writeFile(
+            join(routesDir, 'ide', '+get.ts'),
+            'export const handle = (c) => c.json({ ok: true });',
+        );
+
+        await syncProject({ outDir }, { cwd: tmp });
+        const doc = JSON.parse(await readFile(join(outDir, 'openapi.json'), 'utf8'));
+
+        expect(doc.paths['/ide/draft'].get.tags).toEqual(['IDE', 'Drafts']);
+        expect(doc.paths['/ide/draft'].get.summary).toBe('Get draft');
+        expect(doc.paths['/ide/draft'].get.operationId).toBe('getDraft');
+        expect(doc.paths['/ide'].get.tags).toEqual(['IDE']);
+        expect(doc.tags).toEqual([{ name: 'IDE' }, { name: 'Drafts' }]);
+    });
+
     it('emits a manifest and param types per route folder', async () => {
         const routesDir = join(tmp, 'src', 'routes');
         const outDir = join(tmp, '.giri');

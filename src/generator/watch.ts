@@ -41,6 +41,7 @@ export function createWatchUpdater(
         data.inputsByFile = result.data.inputsByFile;
         data.securityByFile = result.data.securityByFile;
         data.hiddenFiles = result.data.hiddenFiles;
+        data.openapiByFile = result.data.openapiByFile;
         purgeGeneratedModules(paths.outDir);
         return 'full';
     };
@@ -62,6 +63,7 @@ export function createWatchUpdater(
             data.inputsByFile.delete(key);
             data.securityByFile.delete(key);
             data.hiddenFiles.delete(key);
+            data.openapiByFile.delete(key);
             if (entry?.input) {
                 data.inputsByFile.set(key, entry.input);
             }
@@ -70,6 +72,9 @@ export function createWatchUpdater(
             }
             if (entry?.hidden) {
                 data.hiddenFiles.add(key);
+            }
+            if (entry?.openapi) {
+                data.openapiByFile.set(key, entry.openapi);
             }
         } catch {
             // keep previous metadata on failure
