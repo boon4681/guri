@@ -95,13 +95,24 @@ function isTypedResponse(checker: ts.TypeChecker, type: ts.Type): boolean {
     );
 }
 
+function firstParameterName(
+    fn: ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration,
+): string | undefined {
+    const [first] = fn.parameters;
+    return first && ts.isIdentifier(first.name) ? first.name.text : undefined;
+}
+
 /**
  * Read a `c.json(data, status?)` / `c.text(data, status?)` call directly. Reading the
  * status from the argument (default 200) sidesteps contextual typing: a `: Handle`
  * annotation otherwise widens an omitted status from its `= 200` default down to
  * `StatusCode`. Data still comes from the argument's own type.
  */
-function readFromCall(checker: ts.TypeChecker, expression: ts.Expression): ResponseHit | undefined {
+function readFromCall(
+    checker: ts.TypeChecker,
+    expression: ts.Expression,
+    contextName: string | undefined,
+): ResponseHit | undefined {
     if (!ts.isCallExpression(expression) || !ts.isPropertyAccessExpression(expression.expression)) {
         return undefined;
     }
@@ -109,7 +120,9 @@ function readFromCall(checker: ts.TypeChecker, expression: ts.Expression): Respo
     if (method !== 'json' && method !== 'text') {
         return undefined;
     }
-    if (!isTypedResponse(checker, checker.getTypeAtLocation(expression))) {
+    const target = expression.expression.expression;
+    const directContextCall = contextName && ts.isIdentifier(target) && target.text === contextName;
+    if (!directContextCall && !isTypedResponse(checker, checker.getTypeAtLocation(expression))) {
         return undefined;
     }
 
@@ -163,6 +176,7 @@ export function extractRouteResponses(program: ts.Program, file: string): RouteR
     }
 
     const ctx = createWalkContext(checker, fn);
+    const contextName = firstParameterName(fn);
     const byStatus = new Map<number | 'default', { format: 'json' | 'text'; schemas: JSONSchema[] }>();
 
     const record = (hit: ResponseHit): void => {
@@ -173,7 +187,7 @@ export function extractRouteResponses(program: ts.Program, file: string): RouteR
     };
 
     for (const expression of collectReturnExpressions(fn)) {
-        const fromCall = readFromCall(checker, expression);
+        const fromCall = readFromCall(checker, expression, contextName);
         if (fromCall) {
             record(fromCall);
             continue;

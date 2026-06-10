@@ -350,7 +350,7 @@ function displayHost(address: string): string {
 async function serveProject(config: GiriConfig, flags: ParsedFlags): Promise<void> {
     Error.stackTraceLimit = 30;
 
-    const { watch } = await import('node:fs');
+    const { watch } = await import('chokidar');
     let stop: (() => Promise<void>) | undefined;
     const boot = async (cfg: GiriConfig): Promise<void> => {
         const initial = await syncProject(cfg);
@@ -397,21 +397,30 @@ async function serveProject(config: GiriConfig, flags: ParsedFlags): Promise<voi
                         while (changed.size > 0) {
                             const batch = [...changed];
                             changed.clear();
-                            let dirty = false;
+                            let rebuild = false;
+                            let fullSync = false;
+                            const dirtySet = new Set<string>();
                             for (const name of batch) {
                                 const outcome = await updater.apply(name || null);
                                 if (outcome === 'skip') {
                                     continue;
                                 }
-                                dirty = true;
+                                rebuild = true;
+                                if (name) {
+                                    dirtySet.add(resolve(srcDir, name));
+                                }
                                 const rel = name ? `src/${name.replace(/\\/g, '/')}` : 'src';
                                 log.change(outcome === 'full' ? 'sync' : 'update', rel, bump(rel));
                                 if (outcome === 'full') {
+                                    fullSync = true;
                                     break;
                                 }
                             }
-                            if (dirty) {
-                                current = await buildGiriApp(cfg, { services });
+                            if (rebuild) {
+                                current = await buildGiriApp(cfg, {
+                                    services,
+                                    dirty: fullSync ? undefined : dirtySet,
+                                });
                             }
                         }
                     } catch (error) {
@@ -424,11 +433,15 @@ async function serveProject(config: GiriConfig, flags: ParsedFlags): Promise<voi
                     }
                 };
 
-                const watcher = watch(srcDir, { recursive: true }, (_event, filename) => {
-                    changed.add(filename ? filename.toString() : '');
+                const watcher = watch(srcDir, { persistent: true });
+                const onFileChange = (filename: string): void => {
+                    changed.add(filename);
                     clearTimeout(timer);
                     timer = setTimeout(() => void flush(), 150);
-                });
+                };
+                watcher.on('change', onFileChange);
+                watcher.on('add', onFileChange);
+                watcher.on('unlink', onFileChange);
                 closers.push(() => {
                     clearTimeout(timer);
                     watcher.close();
@@ -480,7 +493,8 @@ async function serveProject(config: GiriConfig, flags: ParsedFlags): Promise<voi
                 restarting = false;
             }
         };
-        watch(dirname(configPath), { recursive: false }, (_event, filename) => {
+        const configWatcher = watch(dirname(configPath), { persistent: true });
+        configWatcher.on('all', (_event, filename) => {
             if (filename && basename(filename.toString()) === configName) {
                 clearTimeout(timer);
                 timer = setTimeout(() => void restart(), 150);

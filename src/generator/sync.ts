@@ -34,10 +34,11 @@ async function typeFolders(paths: GiriPaths, routes: ScannedRoute[]): Promise<Ty
     }
 
     const dirs = await scanRouteFolders(paths.routesDir);
+    const sharedCache = new Map<string, string | undefined>();
     return dirs.map((dir) => ({
         dir,
         params: routeParamsForDir(paths.routesDir, dir),
-        sharedFiles: sharedFilesForDir(paths.routesDir, dir),
+        sharedFiles: sharedFilesForDir(paths.routesDir, dir, sharedCache),
         verbs: verbsByDir.get(slash(dir)) ?? [],
     }));
 }
@@ -75,18 +76,60 @@ async function extractResponses(paths: GiriPaths, routes: ScannedRoute[]): Promi
         const files = [...new Set(routes.map((route) => route.file))];
         // Include the generated global app.d.ts so `c.app` resolves to its real type.
         const appTypes = join(paths.outDir, 'types', 'app.d.ts');
-        const program = createSchemaProgram(
-            paths,
-            existsSync(appTypes) ? [...files, appTypes] : files,
-        );
+        const roots = existsSync(appTypes) ? [...files, appTypes] : files;
+        const program = createSchemaProgram(paths, roots, { lean: true });
+        const fallbackFiles: string[] = [];
         for (const file of files) {
-            byFile.set(file, extractRouteResponses(program, file));
+            const responses = extractRouteResponses(program, file);
+            byFile.set(file, responses);
+            if (hasLooseResponseSchema(responses)) {
+                fallbackFiles.push(file);
+            }
+        }
+        if (fallbackFiles.length > 0) {
+            const fullProgram = createSchemaProgram(
+                paths,
+                existsSync(appTypes) ? [...fallbackFiles, appTypes] : fallbackFiles,
+            );
+            for (const file of fallbackFiles) {
+                byFile.set(file, extractRouteResponses(fullProgram, file));
+            }
         }
     } catch (error) {
         console.warn(`giri: skipped response schema generation (${(error as Error).message}).`);
     }
 
     return byFile;
+}
+
+function isLooseSchema(value: unknown): boolean {
+    if (!value || typeof value !== 'object') {
+        return false;
+    }
+
+    const schema = value as Record<string, unknown>;
+    const keys = Object.keys(schema);
+    if (keys.length === 0) {
+        return true;
+    }
+    if (typeof schema.$ref === 'string') {
+        return false;
+    }
+    if (Array.isArray(schema.anyOf) && schema.anyOf.some(isLooseSchema)) {
+        return true;
+    }
+    if (schema.items && isLooseSchema(schema.items)) {
+        return true;
+    }
+    if (schema.properties && typeof schema.properties === 'object') {
+        return Object.values(schema.properties as Record<string, unknown>).some(isLooseSchema);
+    }
+
+    return false;
+}
+
+function hasLooseResponseSchema(responses: RouteResponses): boolean {
+    return responses.responses.some((response) => isLooseSchema(response.schema));
 }
 
 interface RuntimeMeta {
@@ -145,6 +188,7 @@ export async function syncProject<App>(
 ): Promise<SyncResult> {
     const paths = resolveGiriPaths(config, options.cwd);
     assertSafeOutDir(paths);
+    const hadOutDir = existsSync(paths.outDir);
     const routes = await scanRoutes(paths.routesDir);
     const folders = await typeFolders(paths, routes);
 
@@ -161,17 +205,19 @@ export async function syncProject<App>(
     await writeManifest(paths, routes, data);
     await writeOpenApi(paths, routes, data);
 
-    await pruneDir(
-        paths.outDir,
-        new Set([
-            join(paths.outDir, 'tsconfig.json'),
-            join(paths.outDir, 'manifest.json'),
-            join(paths.outDir, 'openapi.json'),
-            join(paths.outDir, 'routes.d.ts'),
-            join(paths.outDir, 'types', 'app.d.ts'),
-            ...folders.map((folder) => typeFilePath(paths, folder.dir)),
-        ]),
-    );
+    if (hadOutDir) {
+        await pruneDir(
+            paths.outDir,
+            new Set([
+                join(paths.outDir, 'tsconfig.json'),
+                join(paths.outDir, 'manifest.json'),
+                join(paths.outDir, 'openapi.json'),
+                join(paths.outDir, 'routes.d.ts'),
+                join(paths.outDir, 'types', 'app.d.ts'),
+                ...folders.map((folder) => typeFilePath(paths, folder.dir)),
+            ]),
+        );
+    }
 
     return { paths, routes, folders, data };
 }

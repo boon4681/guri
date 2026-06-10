@@ -1,6 +1,6 @@
 {
     "name": "@boon4681/giri",
-    "version": "0.0.2-alpha-7",
+    "version": "0.0.2-alpha-8",
     "license": "MIT",
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",
@@ -38,7 +38,9 @@
         "dist"
     ],
     "scripts": {
+        "bench": "yarn --cwd .bench bench",
         "build": "tsx ./build.ts",
+        "speed": "yarn bench",
         "test": "vitest --run",
         "typecheck": "tsc --noEmit"
     },
@@ -46,6 +48,7 @@
         "@clack/prompts": "^1.5.1",
         "@hono/standard-validator": "^0.2.1",
         "@sinclair/typebox": "^0.34.49",
+        "chokidar": "^5.0.0",
         "esbuild": "^0.27.7",
         "esbuild-register": "^3.6.0",
         "openapi-types": "^12.1.3",

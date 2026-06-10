@@ -8,6 +8,8 @@ import { isGiriBodySchema, isGiriInputSchema } from './validation';
 export interface BuildGiriAppOptions {
     cwd?: string;
     services?: Services;
+    /** Files that changed since last build — only these are purged from require.cache before loading. */
+    dirty?: Set<string>;
 }
 
 export interface BuiltGiriApp<App> {
@@ -26,9 +28,11 @@ interface RouteModule {
     };
 }
 
-function loadModule(file: string): unknown {
+function loadModule(file: string, force = true): unknown {
     const resolved = require.resolve(file);
-    delete require.cache[resolved];
+    if (force) {
+        delete require.cache[resolved];
+    }
     return require(resolved);
 }
 
@@ -215,8 +219,19 @@ export async function buildGiriApp<App>(
     const unregisterAliasResolver = registerAliasResolver(config.alias, paths.cwd);
 
     try {
+        const dirty = options.dirty;
+        const forceReload = dirty === undefined;
+        const isDirty = (file: string): boolean => forceReload || dirty.has(file);
+        const sharedCache = new Map<string, unknown>();
+        const loadShared = (file: string): unknown => {
+            if (!sharedCache.has(file)) {
+                sharedCache.set(file, loadModule(file, isDirty(file)));
+            }
+            return sharedCache.get(file);
+        };
+
         for (const route of routes) {
-            const routeModule = loadModule(route.file) as RouteModule;
+            const routeModule = loadModule(route.file, isDirty(route.file)) as RouteModule;
             if (typeof routeModule.handle !== 'function') {
                 throw new Error(`${route.file} must export a named handle function.`);
             }
@@ -224,7 +239,7 @@ export async function buildGiriApp<App>(
             const folderMiddleware = routeModule.config?.skipInherited
                 ? []
                 : route.sharedFiles.flatMap((file) =>
-                    normalizeMiddleware((loadModule(file) as { middleware?: unknown }).middleware, file),
+                    normalizeMiddleware((loadShared(file) as { middleware?: unknown }).middleware, file),
                 );
             const verbMiddleware = normalizeMiddleware(routeModule.middleware, route.file);
 

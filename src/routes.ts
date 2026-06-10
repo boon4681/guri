@@ -41,13 +41,18 @@ function methodFromFile(fileName: string): HttpMethod | undefined {
     return METHOD_FROM_FILE.get(stem);
 }
 
-function sharedFileIn(dir: string): string | undefined {
+function sharedFileIn(dir: string, cache?: Map<string, string | undefined>): string | undefined {
+    if (cache?.has(dir)) {
+        return cache.get(dir);
+    }
     for (const ext of ['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'mts', 'cts']) {
         const file = join(dir, `+shared.${ext}`);
         if (existsSync(file)) {
+            cache?.set(dir, file);
             return file;
         }
     }
+    cache?.set(dir, undefined);
     return undefined;
 }
 
@@ -133,7 +138,11 @@ export function routeParamsForDir(routesDir: string, dir: string): RouteParam[] 
 }
 
 /** The ordered `+shared.ts` chain that applies to a directory. */
-export function sharedFilesForDir(routesDir: string, dir: string): string[] {
+export function sharedFilesForDir(
+    routesDir: string,
+    dir: string,
+    cache?: Map<string, string | undefined>,
+): string[] {
     const segments = physicalRouteSegments(routesDir, dir);
     const dirs = [routesDir];
 
@@ -143,7 +152,7 @@ export function sharedFilesForDir(routesDir: string, dir: string): string[] {
         dirs.push(current);
     }
 
-    return dirs.map(sharedFileIn).filter((file): file is string => Boolean(file));
+    return dirs.map((currentDir) => sharedFileIn(currentDir, cache)).filter((file): file is string => Boolean(file));
 }
 
 export async function scanRoutes(routesDir: string): Promise<ScannedRoute[]> {
@@ -158,6 +167,7 @@ export async function scanRoutes(routesDir: string): Promise<ScannedRoute[]> {
     });
 
     const routes: ScannedRoute[] = [];
+    const sharedCache = new Map<string, string | undefined>();
 
     for (const file of files) {
         const method = methodFromFile(basename(file));
@@ -176,7 +186,7 @@ export async function scanRoutes(routesDir: string): Promise<ScannedRoute[]> {
             routeDir,
             routeSegments,
             params,
-            sharedFiles: sharedFilesForDir(routesDir, routeDir),
+            sharedFiles: sharedFilesForDir(routesDir, routeDir, sharedCache),
         });
     }
 
