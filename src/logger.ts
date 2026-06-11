@@ -54,6 +54,14 @@ const tag = {
     error: color.bold(color.red(`[${TAG}]`)),
 };
 
+/** Preserve stack frames for real errors while still accepting arbitrary thrown values. */
+export function formatError(error: unknown): string {
+    if (error instanceof Error) {
+        return error.stack ?? `${error.name}: ${error.message}`;
+    }
+    return String(error);
+}
+
 export const log = {
     info(message: string, scope?: string): void {
         console.log(line(tag.info, message, scope));

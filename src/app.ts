@@ -1,7 +1,7 @@
 import Module from 'node:module';
 import { isAbsolute, join, resolve } from 'node:path';
 import { safeRegister } from './loader/loader';
-import { scanRoutes, type ScannedRoute } from './routes';
+import { assertRouteHandleExport, scanRoutes, type ScannedRoute } from './routes';
 import type {
     GiriBodySchema,
     GiriConfig,
@@ -227,6 +227,11 @@ export async function buildGiriApp<App>(
 ): Promise<BuiltGiriApp<App>> {
     const paths = resolveGiriPaths(config, options.cwd);
     const routes = await scanRoutes(paths.routesDir);
+    if (options.lazy) {
+        for (const route of routes) {
+            assertRouteHandleExport(route.file);
+        }
+    }
     const app = config.adapter.createApp();
     // Install the persistent `$giri` resolver BEFORE esbuild-register: it patches
     // `_resolveFilename` too, and its unregister() restores whatever it captured

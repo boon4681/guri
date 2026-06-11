@@ -8,7 +8,7 @@ import { buildGiriApp, registerAliasResolver } from './app';
 import { findConfigPath, load, safeRegister } from './loader/loader';
 import { createWatchUpdater, syncProject } from './generator';
 import { loadLifecycle, runInit } from './lifecycle';
-import { color, log, muted } from './logger';
+import { color, formatError, log, muted } from './logger';
 import type { Services, GiriConfig, GiriFetchHandler } from './types';
 
 interface ParsedFlags {
@@ -414,7 +414,9 @@ async function serveProject(config: GiriConfig, flags: ParsedFlags): Promise<voi
                             let fullSync = false;
                             const dirtySet = new Set<string>();
                             for (const name of batch) {
-                                const outcome = await updater.apply(name || null);
+                                const outcome = await updater.apply(name || null, {
+                                    deferMetadata: true,
+                                });
                                 if (outcome === 'skip') {
                                     continue;
                                 }
@@ -440,7 +442,7 @@ async function serveProject(config: GiriConfig, flags: ParsedFlags): Promise<voi
                             }
                         }
                     } catch (error) {
-                        log.error(error instanceof Error ? error.message : String(error), 'watch');
+                        log.error(formatError(error), 'watch');
                     } finally {
                         syncing = false;
                     }

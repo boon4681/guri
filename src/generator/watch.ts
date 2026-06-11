@@ -1,5 +1,5 @@
 import { existsSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { buildImportGraph } from '../loader/import-graph';
 import {
     collectDependents,
@@ -7,7 +7,11 @@ import {
     purgeModules,
     purgeProjectModules,
 } from '../loader/module-loader';
-import type { ScannedRoute } from '../routes';
+import {
+    assertRouteHandleExport,
+    assertSourceSyntax,
+    type ScannedRoute,
+} from '../routes';
 import type { GiriConfig } from '../types';
 import { writeManifest } from './manifest';
 import { writeOpenApi } from './openapi';
@@ -18,12 +22,19 @@ import { slash } from './util';
 
 export type ChangeOutcome = 'incremental' | 'full' | 'skip';
 
+export interface WatchApplyOptions {
+    /** Let runtime HMR continue while OpenAPI/response metadata refreshes in the background. */
+    deferMetadata?: boolean;
+}
+
 export interface WatchUpdater {
     /**
      * Apply one watch event. Returns 'incremental'/'full' for real changes, or 'skip' for
      * directory notifications (the real edit always arrives as a separate file event).
      */
-    apply(filename: string | null): Promise<ChangeOutcome>;
+    apply(filename: string | null, options?: WatchApplyOptions): Promise<ChangeOutcome>;
+    /** Wait for deferred metadata work, primarily for tests and controlled shutdowns. */
+    settled(): Promise<void>;
 }
 
 export function createWatchUpdater(
@@ -33,8 +44,10 @@ export function createWatchUpdater(
     const paths = initial.paths;
     let routes = initial.routes;
     const data = initial.data;
+    let metadataQueue = Promise.resolve();
 
     const fullResync = async (): Promise<ChangeOutcome> => {
+        await metadataQueue;
         purgeProjectModules(paths.cwd);
         const result = await syncProject(config, { cwd: paths.cwd });
         routes = result.routes;
@@ -47,35 +60,51 @@ export function createWatchUpdater(
         return 'full';
     };
 
-    /** Recompute just one route's response/input/security/visibility metadata in place. */
-    const reextractRoute = async (route: ScannedRoute): Promise<void> => {
-        const key = route.file;
+    /** Recompute affected routes in one TypeScript program and one metadata-loading pass. */
+    const reextractRoutes = async (affected: ScannedRoute[]): Promise<void> => {
+        if (affected.length === 0) {
+            return;
+        }
+
         try {
             const { createSchemaProgram, extractRouteResponses } = await import('./schema/index.js');
             const appTypes = join(paths.outDir, 'types', 'app.d.ts');
-            const program = createSchemaProgram(paths, existsSync(appTypes) ? [key, appTypes] : [key]);
-            data.responsesByFile.set(key, extractRouteResponses(program, key));
+            const files = affected.map((route) => route.file);
+            const program = createSchemaProgram(
+                paths,
+                existsSync(appTypes) ? [...files, appTypes] : files,
+            );
+            for (const route of affected) {
+                data.responsesByFile.set(
+                    route.file,
+                    extractRouteResponses(program, route.file),
+                );
+            }
         } catch {
             // keep the previous response schema on failure (e.g. mid-save / type error)
         }
+
         try {
-            const meta = await extractRouteMeta(config, paths, [route]);
-            const entry = meta.get(key);
-            data.inputsByFile.delete(key);
-            data.securityByFile.delete(key);
-            data.hiddenFiles.delete(key);
-            data.openapiByFile.delete(key);
-            if (entry?.input) {
-                data.inputsByFile.set(key, entry.input);
-            }
-            if (entry?.security) {
-                data.securityByFile.set(key, entry.security);
-            }
-            if (entry?.hidden) {
-                data.hiddenFiles.add(key);
-            }
-            if (entry?.openapi) {
-                data.openapiByFile.set(key, entry.openapi);
+            const meta = await extractRouteMeta(config, paths, affected);
+            for (const route of affected) {
+                const key = route.file;
+                const entry = meta.get(key);
+                data.inputsByFile.delete(key);
+                data.securityByFile.delete(key);
+                data.hiddenFiles.delete(key);
+                data.openapiByFile.delete(key);
+                if (entry?.input) {
+                    data.inputsByFile.set(key, entry.input);
+                }
+                if (entry?.security) {
+                    data.securityByFile.set(key, entry.security);
+                }
+                if (entry?.hidden) {
+                    data.hiddenFiles.add(key);
+                }
+                if (entry?.openapi) {
+                    data.openapiByFile.set(key, entry.openapi);
+                }
             }
         } catch {
             // keep previous metadata on failure
@@ -83,7 +112,8 @@ export function createWatchUpdater(
     };
 
     return {
-        async apply(filename) {
+        settled: () => metadataQueue,
+        async apply(filename, options = {}) {
             if (!filename) {
                 return fullResync();
             }
@@ -102,10 +132,34 @@ export function createWatchUpdater(
                 return 'skip';
             }
 
-            const graph = await buildImportGraph(config, paths.cwd);
-            const isRoute = routes.some((candidate) => slash(candidate.file) === file);
+            // TypeScript can still produce a partial AST for malformed source. Reject its parse
+            // diagnostics before logging an update or replacing the last working app.
+            assertSourceSyntax(abs);
 
-            if (!graph.nodes.has(file) && !isRoute) {
+            const isRoute = routes.some((candidate) => slash(candidate.file) === file);
+            const isShared = routes.some((route) =>
+                route.sharedFiles.some((shared) => slash(shared) === file),
+            );
+            const isMethodFile =
+                /^\+(?:get|post|put|patch|delete|options|head)\.(?:[cm]?[jt]s|[jt]sx)$/i
+                    .test(basename(file));
+            const isNewRouteStructure =
+                file.startsWith(`${slash(paths.routesDir)}/`) &&
+                /^\+(?:get|post|put|patch|delete|options|head|shared)\.(?:[cm]?[jt]s|[jt]sx)$/i
+                    .test(basename(file)) &&
+                !isRoute &&
+                !isShared;
+
+            if (isRoute || (isNewRouteStructure && isMethodFile)) {
+                assertRouteHandleExport(abs);
+            }
+
+            if (isNewRouteStructure) {
+                return fullResync();
+            }
+
+            const graph = await buildImportGraph(config, paths.cwd);
+            if (!graph.nodes.has(file) && !isRoute && !isShared) {
                 return fullResync();
             }
 
@@ -115,13 +169,20 @@ export function createWatchUpdater(
                 route.sharedFiles.some((shared) => dependents.has(slash(shared))),
             );
             purgeModules(dependents);
-            for (const route of affected) {
-                await reextractRoute(route);
+            const refreshMetadata = async (): Promise<void> => {
+                await reextractRoutes(affected);
+                await writeManifest(paths, routes, data);
+                await writeOpenApi(paths, routes, data);
+                await writeSyncCache(paths, await syncFingerprint(config, paths), data);
+                purgeGeneratedModules(paths.outDir);
+            };
+            const task = metadataQueue.then(refreshMetadata);
+            metadataQueue = task.catch((error) => {
+                console.error('giri: deferred metadata update failed', error);
+            });
+            if (!options.deferMetadata) {
+                await task;
             }
-            await writeManifest(paths, routes, data);
-            await writeOpenApi(paths, routes, data);
-            await writeSyncCache(paths, await syncFingerprint(config, paths), data);
-            purgeGeneratedModules(paths.outDir);
             return 'incremental';
         },
     };

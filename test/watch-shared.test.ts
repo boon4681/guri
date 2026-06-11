@@ -43,8 +43,9 @@ describe('watch: +shared.ts change', () => {
             join(routesDir, '+shared.ts'),
             'export const middleware = async (c, next) => { c.set("role", "admin"); await next(); };',
         );
-        const outcome = await updater.apply('routes/+shared.ts');
-        expect(outcome === 'incremental' || outcome === 'full').toBe(true);
+        const outcome = await updater.apply('routes/+shared.ts', { deferMetadata: true });
+        expect(outcome).toBe('incremental');
+        await updater.settled();
 
         expect(await roleFrom(config)).toBe('admin');
     });

@@ -132,6 +132,9 @@ export async function buildImportGraph(
         if (file.startsWith(outDir)) {
             continue;
         }
+        // Standalone files are still graph nodes. Without this, a +shared.ts that only imports
+        // external packages is mistaken for an unknown structural change and forces a full sync.
+        nodes.add(toSlash(file));
         for (const specifier of importSpecifiers(file)) {
             const dep = resolveSpecifier(specifier, file, config.alias, root);
             if (!dep || dep.startsWith(outDir)) {
@@ -139,7 +142,6 @@ export async function buildImportGraph(
             }
             const from = toSlash(file);
             const to = toSlash(dep);
-            nodes.add(from);
             nodes.add(to);
             let set = importers.get(to);
             if (!set) {

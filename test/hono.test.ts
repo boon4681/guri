@@ -97,6 +97,37 @@ describe('hono adapter', () => {
         }
     });
 
+    it('reports a missing handle before registering a lazy route', async () => {
+        const routesDir = join(tmp, 'src', 'routes');
+        await mkdir(routesDir, { recursive: true });
+        await writeFile(join(routesDir, '+get.ts'), 'export const status = 200;');
+
+        const config = defineConfig({ adapter: hono(), outDir: join(tmp, '.giri') });
+        await expect(buildGiriApp(config, {
+            cwd: tmp,
+            lazy: true,
+            loaderRegistered: true,
+            aliasResolverRegistered: true,
+        })).rejects.toThrow(/\+get\.ts must export a named handle function/);
+    });
+
+    it('reports route syntax errors before registering a lazy route', async () => {
+        const routesDir = join(tmp, 'src', 'routes');
+        await mkdir(routesDir, { recursive: true });
+        await writeFile(
+            join(routesDir, '+get.ts'),
+            'export const handle = (c) => { return c.json({ ok: true });',
+        );
+
+        const config = defineConfig({ adapter: hono(), outDir: join(tmp, '.giri') });
+        await expect(buildGiriApp(config, {
+            cwd: tmp,
+            lazy: true,
+            loaderRegistered: true,
+            aliasResolverRegistered: true,
+        })).rejects.toThrow(/\+get\.ts:\d+:\d+ - error TS\d+:/);
+    });
+
     it('seeds init() services into c.app for every route', async () => {
         const routesDir = join(tmp, 'src', 'routes');
         await mkdir(routesDir, { recursive: true });

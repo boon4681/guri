@@ -44,6 +44,58 @@ describe('createWatchUpdater', () => {
         expect(existsSync(typesFile)).toBe(true);
     });
 
+    it('reports when an edited route removes its handle export', async () => {
+        const routesDir = join(tmp, 'src', 'routes');
+        const outDir = join(tmp, '.giri');
+        await mkdir(routesDir, { recursive: true });
+        const verb = join(routesDir, '+get.ts');
+        await writeFile(verb, 'export const handle = () => new Response();');
+
+        const initial = await syncProject({ outDir }, { cwd: tmp });
+        const updater = createWatchUpdater({ outDir }, initial);
+
+        await writeFile(verb, 'export const status = 200;');
+        await expect(
+            updater.apply('routes/+get.ts', { deferMetadata: true }),
+        ).rejects.toThrow(/\+get\.ts must export a named handle function/);
+    });
+
+    it('reports syntax errors before accepting a route update', async () => {
+        const routesDir = join(tmp, 'src', 'routes');
+        const outDir = join(tmp, '.giri');
+        await mkdir(routesDir, { recursive: true });
+        const verb = join(routesDir, '+get.ts');
+        await writeFile(verb, 'export const handle = () => new Response();');
+
+        const initial = await syncProject({ outDir }, { cwd: tmp });
+        const updater = createWatchUpdater({ outDir }, initial);
+
+        await writeFile(verb, 'export const handle = () => { return new Response();');
+        await expect(
+            updater.apply('routes/+get.ts', { deferMetadata: true }),
+        ).rejects.toThrow(/\+get\.ts:\d+:\d+ - error TS\d+:/);
+    });
+
+    it('reports syntax errors in a changed route dependency', async () => {
+        const routesDir = join(tmp, 'src', 'routes');
+        const outDir = join(tmp, '.giri');
+        await mkdir(routesDir, { recursive: true });
+        const helper = join(tmp, 'src', 'helper.ts');
+        await writeFile(helper, 'export const value = 1;');
+        await writeFile(
+            join(routesDir, '+get.ts'),
+            'import { value } from "../helper";\nexport const handle = (c) => c.json({ value });',
+        );
+
+        const initial = await syncProject({ outDir }, { cwd: tmp });
+        const updater = createWatchUpdater({ outDir }, initial);
+
+        await writeFile(helper, 'export const value = {;');
+        await expect(
+            updater.apply('helper.ts', { deferMetadata: true }),
+        ).rejects.toThrow(/helper\.ts:\d+:\d+ - error TS\d+:/);
+    });
+
     it('purges the openapi.json require-cache so a rebuild serves the fresh spec', async () => {
         const routesDir = join(tmp, 'src', 'routes');
         const outDir = join(tmp, '.giri');
@@ -67,7 +119,7 @@ describe('createWatchUpdater', () => {
         expect(after.paths?.['/secret']?.get).toBeUndefined();
     });
 
-    it('treats an unimported source file as a full sync', async () => {
+    it('ignores an unimported source file without forcing a full sync', async () => {
         const routesDir = join(tmp, 'src', 'routes');
         const outDir = join(tmp, '.giri');
         await mkdir(routesDir, { recursive: true });
@@ -78,7 +130,20 @@ describe('createWatchUpdater', () => {
         const initial = await syncProject({ outDir }, { cwd: tmp });
         const updater = createWatchUpdater({ outDir }, initial);
 
-        expect(await updater.apply('auth.ts')).toBe('full');
+        expect(await updater.apply('auth.ts')).toBe('incremental');
+    });
+
+    it('fully resyncs when a new route file changes route structure', async () => {
+        const routesDir = join(tmp, 'src', 'routes');
+        const outDir = join(tmp, '.giri');
+        await mkdir(routesDir, { recursive: true });
+        await writeFile(join(routesDir, '+get.ts'), 'export const handle = () => new Response();');
+
+        const initial = await syncProject({ outDir }, { cwd: tmp });
+        const updater = createWatchUpdater({ outDir }, initial);
+
+        await writeFile(join(routesDir, '+post.ts'), 'export const handle = () => new Response();');
+        expect(await updater.apply('routes/+post.ts')).toBe('full');
     });
 
     it('rebuilds a route incrementally when a helper it imports changes', async () => {
