@@ -115,6 +115,22 @@ describe('schema walker', () => {
         });
     });
 
+    it('serializes a custom toJSON() via its return type', async () => {
+        const file = await writeRoute('tojson.ts', [
+            'import type { Handle } from "@boon4681/giri";',
+            'class Money { constructor(public cents: number) {} toJSON(): { amount: number; currency: string } { return { amount: this.cents / 100, currency: "USD" }; } }',
+            'export const handle: Handle = (c) => c.json(new Money(500));',
+        ]);
+
+        const { responses } = extractRouteResponses(buildProgram([file]), file);
+        expect(responses[0].schema).toEqual({
+            type: 'object',
+            properties: { amount: { type: 'number' }, currency: { type: 'string' } },
+            required: ['amount', 'currency'],
+            additionalProperties: false,
+        });
+    });
+
     it('emits $ref/$defs for recursive types', async () => {
         const file = await writeRoute('tree.ts', [
             'import type { Handle } from "@boon4681/giri";',

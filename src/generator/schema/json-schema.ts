@@ -109,6 +109,17 @@ function buildObjectSchema(type: ts.Type, ctx: WalkContext): JSONSchema {
     return schema;
 }
 
+/** `JSON.stringify` serializes via `toJSON()` when present, so its return type is the wire shape. */
+function toJsonReturnType(type: ts.Type, ctx: WalkContext): ts.Type | undefined {
+    const symbol = ctx.checker.getPropertyOfType(type, 'toJSON');
+    if (!symbol) {
+        return undefined;
+    }
+    const methodType = ctx.checker.getTypeOfSymbolAtLocation(symbol, ctx.location);
+    const [signature] = methodType.getCallSignatures();
+    return signature ? ctx.checker.getReturnTypeOfSignature(signature) : undefined;
+}
+
 function defName(type: ts.Type): string {
     const symbol = type.getSymbol() ?? type.aliasSymbol;
     const name = symbol?.getName();
@@ -123,6 +134,12 @@ function walkObject(type: ts.Type, ctx: WalkContext): JSONSchema {
 
     if (isDateType(type)) {
         return { type: 'string', format: 'date-time' };
+    }
+    if (!checker.isArrayType(type) && !checker.isTupleType(type)) {
+        const jsonReturn = toJsonReturnType(type, ctx);
+        if (jsonReturn) {
+            return walkType(jsonReturn, ctx);
+        }
     }
     if (checker.isArrayType(type)) {
         const [element] = checker.getTypeArguments(type as ts.TypeReference);
