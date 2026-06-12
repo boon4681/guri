@@ -250,6 +250,53 @@ function urlSegment(segment: string): { value?: string; param?: RouteParam } {
     return { value: segment };
 }
 
+interface SegmentRank {
+    /** 0 = static, 1 = dynamic param, 2 = catch-all. Lower matches more specifically. */
+    rank: number;
+    text: string;
+}
+
+function segmentRanks(segments: string[]): SegmentRank[] {
+    const ranks: SegmentRank[] = [];
+    for (const segment of segments) {
+        const converted = urlSegment(segment);
+        if (!converted.value) {
+            continue;
+        }
+        if (converted.param?.catchAll) {
+            ranks.push({ rank: 2, text: converted.param.name });
+        } else if (converted.param) {
+            ranks.push({ rank: 1, text: converted.param.name });
+        } else {
+            ranks.push({ rank: 0, text: converted.value });
+        }
+    }
+    return ranks;
+}
+
+/** Order routes so more specific paths come before dynamic and catch-all ones at each segment. */
+function compareRoutes(left: ScannedRoute, right: ScannedRoute): number {
+    const leftRanks = segmentRanks(left.routeSegments);
+    const rightRanks = segmentRanks(right.routeSegments);
+    const shared = Math.min(leftRanks.length, rightRanks.length);
+
+    for (let i = 0; i < shared; i++) {
+        const a = leftRanks[i];
+        const b = rightRanks[i];
+        if (a.rank !== b.rank) {
+            return a.rank - b.rank;
+        }
+        if (a.rank === 0 && a.text !== b.text) {
+            return a.text.localeCompare(b.text);
+        }
+    }
+
+    if (leftRanks.length !== rightRanks.length) {
+        return leftRanks.length - rightRanks.length;
+    }
+    return METHOD_ORDER.indexOf(left.method) - METHOD_ORDER.indexOf(right.method);
+}
+
 export function pathFromSegments(segments: string[]): { path: string; params: RouteParam[] } {
     const pathSegments: string[] = [];
     const params: RouteParam[] = [];
@@ -350,11 +397,5 @@ export async function scanRoutes(routesDir: string): Promise<ScannedRoute[]> {
         });
     }
 
-    return routes.sort((left, right) => {
-        const pathOrder = left.path.localeCompare(right.path);
-        if (pathOrder !== 0) {
-            return pathOrder;
-        }
-        return METHOD_ORDER.indexOf(left.method) - METHOD_ORDER.indexOf(right.method);
-    });
+    return routes.sort(compareRoutes);
 }
